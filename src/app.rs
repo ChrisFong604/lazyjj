@@ -466,8 +466,8 @@ impl App {
             (KeyCode::Tab, _) => Action::FocusNext,
             (KeyCode::BackTab, _) => Action::FocusPrevious,
             (KeyCode::Char('1'), _) => Action::SetFocus(Focus::Files),
-            (KeyCode::Char('2'), _) => Action::SetFocus(Focus::Revisions),
-            (KeyCode::Char('3'), _) => Action::SetFocus(Focus::Bookmarks),
+            (KeyCode::Char('2'), _) => Action::SetFocus(Focus::Bookmarks),
+            (KeyCode::Char('3'), _) => Action::SetFocus(Focus::Revisions),
             (KeyCode::Char('4'), _) => Action::SetFocus(Focus::Operations),
             (KeyCode::Char('5'), _) => Action::SetFocus(Focus::Diff),
             (KeyCode::Char('6'), _) => Action::SetFocus(Focus::Output),
@@ -578,7 +578,13 @@ impl App {
 
     fn move_selection(&mut self, delta: isize) {
         match self.focus {
-            Focus::Files => adjust_index(&mut self.file_index, self.files.len(), delta),
+            Focus::Files => {
+                let prev = self.file_index;
+                adjust_index(&mut self.file_index, self.files.len(), delta);
+                if self.file_index != prev {
+                    self.inspect_current();
+                }
+            }
             Focus::Revisions => adjust_index(&mut self.revision_index, self.revisions.len(), delta),
             Focus::Bookmarks => adjust_index(&mut self.bookmark_index, self.bookmarks.len(), delta),
             Focus::Operations => {
@@ -771,6 +777,6 @@ mod tests {
         assert!(!app.dispatch(Action::SetFocus(Focus::Bookmarks)));
         assert_eq!(app.focus, Focus::Bookmarks);
         assert!(!app.dispatch(Action::FocusNext));
-        assert_eq!(app.focus, Focus::Operations);
+        assert_eq!(app.focus, Focus::Revisions);
     }
 }

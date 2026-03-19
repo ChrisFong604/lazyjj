@@ -70,25 +70,25 @@ fn render_body(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let columns = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Percentage(28),
-            Constraint::Percentage(32),
-            Constraint::Percentage(40),
+            Constraint::Percentage(22),
+            Constraint::Percentage(24),
+            Constraint::Percentage(54),
         ])
         .split(area);
 
     let left = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Percentage(38),
-            Constraint::Percentage(28),
-            Constraint::Percentage(34),
+            Constraint::Percentage(40),
+            Constraint::Percentage(30),
+            Constraint::Percentage(30),
         ])
         .split(columns[0]);
 
     render_list(
         frame,
         left[0],
-        "Files",
+        Focus::Files.title(),
         app.focus == Focus::Files,
         &app.file_rows(),
         app.file_index,
@@ -96,7 +96,7 @@ fn render_body(frame: &mut Frame<'_>, app: &App, area: Rect) {
     render_list(
         frame,
         left[1],
-        "Bookmarks",
+        Focus::Bookmarks.title(),
         app.focus == Focus::Bookmarks,
         &app.bookmark_rows(),
         app.bookmark_index,
@@ -104,18 +104,18 @@ fn render_body(frame: &mut Frame<'_>, app: &App, area: Rect) {
     render_list(
         frame,
         left[2],
-        "Operation Log",
-        app.focus == Focus::Operations,
-        &app.operation_rows(),
-        app.operation_index,
+        Focus::Revisions.title(),
+        app.focus == Focus::Revisions,
+        &app.revision_rows(),
+        app.revision_index,
     );
     render_list(
         frame,
         columns[1],
-        "Revision Stack",
-        app.focus == Focus::Revisions,
-        &app.revision_rows(),
-        app.revision_index,
+        Focus::Operations.title(),
+        app.focus == Focus::Operations,
+        &app.operation_rows(),
+        app.operation_index,
     );
     render_diff(frame, app, columns[2]);
 }
@@ -143,8 +143,11 @@ fn render_list(
 
 fn render_diff(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let title = format!(
-        "Diff  +{} -{}  ({})",
-        app.diff_additions, app.diff_removals, app.diff_title
+        "{}  +{} -{}  ({})",
+        Focus::Diff.title(),
+        app.diff_additions,
+        app.diff_removals,
+        app.diff_title
     );
     let text = Text::from(
         app.diff_lines
@@ -192,7 +195,10 @@ fn render_output(frame: &mut Frame<'_>, app: &App, area: Rect) {
             .collect::<Vec<_>>(),
     );
     let paragraph = Paragraph::new(text)
-        .block(panel_block("Command Log", app.focus == Focus::Output))
+        .block(panel_block(
+            Focus::Output.title(),
+            app.focus == Focus::Output,
+        ))
         .wrap(Wrap { trim: false });
     frame.render_widget(paragraph, area);
 }
@@ -256,11 +262,11 @@ fn render_help(frame: &mut Frame<'_>) {
     let lines = vec![
         "Panel navigation",
         "Tab / Shift+Tab cycle focus",
-        "1-6 jump directly to a panel",
+        "1 Files  2 Bookmarks  3 Revisions  4 Operations  5 Diff  6 Log",
         "",
         "Inspection",
         "Enter opens diff/details for the selected row",
-        "j/k or arrows move selection",
+        "j/k or arrows move selection (auto-previews in Files)",
         "J/K scroll the diff viewer",
         "",
         "Mutations",

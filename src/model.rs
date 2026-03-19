@@ -61,9 +61,9 @@ pub enum Focus {
 impl Focus {
     pub fn next(self) -> Self {
         match self {
-            Self::Files => Self::Revisions,
-            Self::Revisions => Self::Bookmarks,
-            Self::Bookmarks => Self::Operations,
+            Self::Files => Self::Bookmarks,
+            Self::Bookmarks => Self::Revisions,
+            Self::Revisions => Self::Operations,
             Self::Operations => Self::Diff,
             Self::Diff => Self::Output,
             Self::Output => Self::Files,
@@ -73,9 +73,9 @@ impl Focus {
     pub fn previous(self) -> Self {
         match self {
             Self::Files => Self::Output,
-            Self::Revisions => Self::Files,
-            Self::Bookmarks => Self::Revisions,
-            Self::Operations => Self::Bookmarks,
+            Self::Bookmarks => Self::Files,
+            Self::Revisions => Self::Bookmarks,
+            Self::Operations => Self::Revisions,
             Self::Diff => Self::Operations,
             Self::Output => Self::Diff,
         }
@@ -83,12 +83,12 @@ impl Focus {
 
     pub fn title(self) -> &'static str {
         match self {
-            Self::Files => "Files",
-            Self::Revisions => "Revisions",
-            Self::Bookmarks => "Bookmarks",
-            Self::Operations => "Ops",
-            Self::Diff => "Diff",
-            Self::Output => "Command Log",
+            Self::Files => "1 Files",
+            Self::Bookmarks => "2 Bookmarks",
+            Self::Revisions => "3 Revisions",
+            Self::Operations => "4 Operations",
+            Self::Diff => "5 Diff",
+            Self::Output => "6 Command Log",
         }
     }
 }
