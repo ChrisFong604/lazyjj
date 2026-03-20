@@ -1,5 +1,5 @@
 use ratatui::Frame;
-use ratatui::layout::{Alignment, Constraint, Direction, Layout, Margin, Rect};
+use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{
@@ -7,8 +7,10 @@ use ratatui::widgets::{
 };
 
 use crate::app::App;
-use crate::hooks;
-use crate::model::{DiffKind, Focus, HookPhase, PromptState, TreefmtSetup};
+use crate::hooks::{self, TREEFMT_INSTALL_METHODS};
+use crate::model::{
+    DiffKind, Focus, HookPhase, PromptState, ToolPickerRow, ToolPickerState, TreefmtInstallState,
+};
 
 pub fn render(frame: &mut Frame<'_>, app: &App) {
     let root = Layout::default()
@@ -28,8 +30,11 @@ pub fn render(frame: &mut Frame<'_>, app: &App) {
 
     if let Some(phase) = &app.hook_phase {
         render_hook_overlay(frame, phase);
-    } else if let Some(setup) = &app.treefmt_setup {
-        render_treefmt_setup(frame, setup);
+    } else if let Some(picker) = &app.tool_picker {
+        render_tool_picker(frame, picker);
+        if let Some(treefmt_state) = &app.treefmt_install_picker {
+            render_treefmt_install_picker(frame, treefmt_state);
+        }
     } else if let Some(prompt) = &app.prompt {
         render_prompt(frame, prompt);
     } else if app.show_help {
@@ -398,89 +403,151 @@ fn render_hook_overlay(frame: &mut Frame<'_>, phase: &HookPhase) {
     frame.render_widget(paragraph, area);
 }
 
-fn render_treefmt_setup(frame: &mut Frame<'_>, setup: &TreefmtSetup) {
-    let area = centered_rect(60, 50, frame.area());
+fn render_tool_picker(frame: &mut Frame<'_>, picker: &ToolPickerState) {
+    let area = centered_rect(62, 70, frame.area());
     frame.render_widget(Clear, area);
 
-    let installed = setup.installed;
-    let lines = {
-        let action = if installed {
-            "Enable"
-        } else {
-            "Install & Enable"
-        };
-        let mut lines = vec![
-            Line::from(Span::styled(
-                format!("{action} treefmt?"),
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            )),
-            Line::raw(""),
-            Line::from(Span::styled(
-                "  treefmt runs all your project's formatters with a",
-                Style::default().fg(Color::White),
-            )),
-            Line::from(Span::styled(
-                "  single command. Configure which formatters to use in",
-                Style::default().fg(Color::White),
-            )),
-            Line::from(Span::styled(
-                "  treefmt.toml (rustfmt, prettier, black, gofmt, etc).",
-                Style::default().fg(Color::White),
-            )),
-            Line::raw(""),
-            Line::from(Span::styled(
-                "  Open source — https://github.com/numtide/treefmt",
-                Style::default().fg(Color::Gray),
-            )),
-            Line::raw(""),
-        ];
-        if installed {
-            lines.push(Line::from(Span::styled(
-                "  ✓ treefmt is installed",
-                Style::default().fg(Color::Green),
-            )));
-        } else {
-            lines.push(Line::from(Span::styled(
-                "  Will install via nix-env or cargo install",
-                Style::default().fg(Color::Gray),
-            )));
+    let mut lines: Vec<Line<'static>> = vec![
+        Line::raw(""),
+        Line::from(Span::styled(
+            "  Select pre-push hooks to enable:",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::raw(""),
+    ];
+
+    let rows = &picker.rows;
+    for (row_idx, row) in rows.iter().enumerate() {
+        match row {
+            ToolPickerRow::Header(label) => {
+                lines.push(Line::from(Span::styled(
+                    format!("  {label}"),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                )));
+            }
+            ToolPickerRow::Entry(entry_idx) => {
+                let Some(entry) = picker.entries.get(*entry_idx) else {
+                    continue;
+                };
+                let checkbox = if entry.selected { "[x]" } else { "[ ]" };
+                let (status_text, status_style) = if entry.installed {
+                    ("✓ installed", Style::default().fg(Color::Green))
+                } else {
+                    ("✗ not installed", Style::default().fg(Color::DarkGray))
+                };
+
+                // Pad name and language columns for alignment
+                let name_col = format!("{:<14}", entry.name);
+                let lang_col = format!("{:<8}", entry.language);
+
+                let is_cursor = row_idx == picker.cursor;
+                let row_style = if is_cursor {
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                };
+
+                let cmd_style = if is_cursor {
+                    row_style
+                } else {
+                    Style::default().fg(Color::DarkGray)
+                };
+                let mut spans = vec![
+                    Span::styled(format!("  {checkbox} "), row_style),
+                    Span::styled(name_col, row_style),
+                    Span::styled(lang_col, row_style),
+                    if is_cursor {
+                        Span::styled(status_text, row_style)
+                    } else {
+                        Span::styled(status_text, status_style)
+                    },
+                ];
+                // Show hook_command for linters (non-empty) as a dimmed hint
+                if !entry.hook_command.is_empty() {
+                    spans.push(Span::styled(format!("  {}", entry.hook_command), cmd_style));
+                }
+                lines.push(Line::from(spans));
+            }
         }
-        lines.push(Line::raw(""));
-        lines.push(Line::from(Span::styled(
-            "  You can disable it anytime by editing .lazyjj.toml",
-            Style::default().fg(Color::DarkGray),
-        )));
-        lines.push(Line::raw(""));
-        lines.push(Line::from(vec![
-            Span::styled(
-                "  y",
-                Style::default()
-                    .fg(Color::Green)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                if installed { " enable  " } else { " install  " },
-                Style::default().fg(Color::Gray),
-            ),
-            Span::styled(
-                "n",
-                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(" no  ", Style::default().fg(Color::Gray)),
-            Span::styled("Esc", Style::default().fg(Color::Gray)),
-            Span::styled(" skip", Style::default().fg(Color::Gray)),
-        ]));
-        lines
-    };
+    }
+
+    lines.push(Line::raw(""));
+    lines.push(Line::from(vec![
+        Span::styled("  Space", Style::default().fg(Color::Yellow)),
+        Span::styled(" toggle  ", Style::default().fg(Color::Gray)),
+        Span::styled("Enter", Style::default().fg(Color::Yellow)),
+        Span::styled(" confirm  ", Style::default().fg(Color::Gray)),
+        Span::styled("Esc", Style::default().fg(Color::Yellow)),
+        Span::styled(" skip", Style::default().fg(Color::Gray)),
+    ]));
+    lines.push(Line::from(Span::styled(
+        r#"  Custom: add command = "..." to .lazyjj.toml"#,
+        Style::default().fg(Color::DarkGray),
+    )));
 
     let paragraph = Paragraph::new(Text::from(lines))
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title("Setup")
+                .title("Tool Manager")
                 .border_style(Style::default().fg(Color::Yellow)),
+        )
+        .wrap(Wrap { trim: false });
+    frame.render_widget(paragraph, area);
+}
+
+fn render_treefmt_install_picker(frame: &mut Frame<'_>, state: &TreefmtInstallState) {
+    let area = centered_rect(50, 30, frame.area());
+    frame.render_widget(Clear, area);
+
+    let mut lines: Vec<Line<'static>> = vec![
+        Line::raw(""),
+        Line::from(Span::styled(
+            "  treefmt is not installed. Choose an install method:",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::raw(""),
+    ];
+
+    for (i, method) in TREEFMT_INSTALL_METHODS.iter().enumerate() {
+        let is_cursor = i == state.cursor;
+        let row_style = if is_cursor {
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        lines.push(Line::from(Span::styled(
+            format!("  {}", method.label),
+            row_style,
+        )));
+    }
+
+    lines.push(Line::raw(""));
+    lines.push(Line::from(vec![
+        Span::styled("  Enter", Style::default().fg(Color::Yellow)),
+        Span::styled(" install  ", Style::default().fg(Color::Gray)),
+        Span::styled("Esc", Style::default().fg(Color::Yellow)),
+        Span::styled(" back", Style::default().fg(Color::Gray)),
+    ]));
+
+    let paragraph = Paragraph::new(Text::from(lines))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Install treefmt")
+                .border_style(Style::default().fg(Color::Cyan)),
         )
         .wrap(Wrap { trim: false });
     frame.render_widget(paragraph, area);
@@ -515,8 +582,4 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
             Constraint::Percentage((100 - percent_x) / 2),
         ])
         .split(popup[1])[1]
-        .inner(Margin {
-            vertical: 0,
-            horizontal: 0,
-        })
 }

@@ -46,6 +46,232 @@ fn find_preset(name: &str) -> Option<&'static PresetDef> {
     PRESETS.iter().find(|(n, _)| *n == name).map(|(_, d)| d)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolCategory {
+    Formatter,
+    Linter,
+}
+
+/// A treefmt formatter section entry.
+pub struct TreefmtEntry {
+    pub name: &'static str,
+    pub command: &'static str,
+    pub options: &'static [&'static str],
+    pub includes: &'static [&'static str],
+}
+
+/// A tool that can be added to pre-push hooks via the tool picker.
+pub struct ToolDef {
+    pub name: &'static str,
+    pub language: &'static str,
+    pub hook_command: &'static str,
+    /// Shell command to install the tool. Empty string means comes pre-installed.
+    pub install_cmd: &'static str,
+    /// Binary name to check for presence via `which`.
+    pub check_binary: &'static str,
+    pub category: ToolCategory,
+    pub treefmt_entry: Option<TreefmtEntry>,
+}
+
+pub static TOOL_CATALOG: &[ToolDef] = &[
+    // --- Formatters ---
+    ToolDef {
+        name: "rustfmt",
+        language: "Rust",
+        hook_command: "",
+        install_cmd: "rustup component add rustfmt",
+        check_binary: "rustfmt",
+        category: ToolCategory::Formatter,
+        treefmt_entry: Some(TreefmtEntry {
+            name: "rustfmt",
+            command: "rustfmt",
+            options: &[], // --edition is added dynamically from Cargo.toml
+            includes: &["*.rs"],
+        }),
+    },
+    ToolDef {
+        name: "prettier",
+        language: "JS/TS",
+        hook_command: "",
+        install_cmd: "npm install -g prettier",
+        check_binary: "prettier",
+        category: ToolCategory::Formatter,
+        treefmt_entry: Some(TreefmtEntry {
+            name: "prettier",
+            command: "prettier",
+            options: &["--write"],
+            includes: &["*.js", "*.ts", "*.jsx", "*.tsx", "*.css", "*.json", "*.md"],
+        }),
+    },
+    ToolDef {
+        name: "biome format",
+        language: "JS/TS",
+        hook_command: "",
+        install_cmd: "npm install -g @biomejs/biome",
+        check_binary: "biome",
+        category: ToolCategory::Formatter,
+        treefmt_entry: Some(TreefmtEntry {
+            name: "biome-format",
+            command: "biome",
+            options: &["format", "--write"],
+            includes: &["*.js", "*.ts", "*.jsx", "*.tsx", "*.json"],
+        }),
+    },
+    ToolDef {
+        name: "ruff format",
+        language: "Python",
+        hook_command: "",
+        install_cmd: "pip install ruff",
+        check_binary: "ruff",
+        category: ToolCategory::Formatter,
+        treefmt_entry: Some(TreefmtEntry {
+            name: "ruff-format",
+            command: "ruff",
+            options: &["format"],
+            includes: &["*.py"],
+        }),
+    },
+    ToolDef {
+        name: "black",
+        language: "Python",
+        hook_command: "",
+        install_cmd: "pip install black",
+        check_binary: "black",
+        category: ToolCategory::Formatter,
+        treefmt_entry: Some(TreefmtEntry {
+            name: "black",
+            command: "black",
+            options: &[],
+            includes: &["*.py"],
+        }),
+    },
+    ToolDef {
+        name: "gofmt",
+        language: "Go",
+        hook_command: "",
+        install_cmd: "",
+        check_binary: "gofmt",
+        category: ToolCategory::Formatter,
+        treefmt_entry: Some(TreefmtEntry {
+            name: "gofmt",
+            command: "gofmt",
+            options: &["-w"],
+            includes: &["*.go"],
+        }),
+    },
+    // --- Linters ---
+    ToolDef {
+        name: "clippy",
+        language: "Rust",
+        hook_command: "cargo clippy -- -D warnings",
+        install_cmd: "rustup component add clippy",
+        check_binary: "cargo-clippy",
+        category: ToolCategory::Linter,
+        treefmt_entry: None,
+    },
+    ToolDef {
+        name: "eslint",
+        language: "JS/TS",
+        hook_command: "eslint .",
+        install_cmd: "npm install -g eslint",
+        check_binary: "eslint",
+        category: ToolCategory::Linter,
+        treefmt_entry: None,
+    },
+    ToolDef {
+        name: "biome lint",
+        language: "JS/TS",
+        hook_command: "biome lint .",
+        install_cmd: "npm install -g @biomejs/biome",
+        check_binary: "biome",
+        category: ToolCategory::Linter,
+        treefmt_entry: None,
+    },
+    ToolDef {
+        name: "ruff check",
+        language: "Python",
+        hook_command: "ruff check .",
+        install_cmd: "pip install ruff",
+        check_binary: "ruff",
+        category: ToolCategory::Linter,
+        treefmt_entry: None,
+    },
+    ToolDef {
+        name: "go vet",
+        language: "Go",
+        hook_command: "go vet ./...",
+        install_cmd: "",
+        check_binary: "go",
+        category: ToolCategory::Linter,
+        treefmt_entry: None,
+    },
+];
+
+/// Installation methods for treefmt itself.
+pub struct TreefmtInstallMethod {
+    pub label: &'static str,
+    pub command: &'static str,
+}
+
+pub const TREEFMT_INSTALL_METHODS: &[TreefmtInstallMethod] = &[
+    TreefmtInstallMethod {
+        label: "Official installer (curl)",
+        command: "curl -fsSL https://raw.githubusercontent.com/numtide/treefmt/main/install.sh | bash",
+    },
+    TreefmtInstallMethod {
+        label: "Homebrew",
+        command: "brew install treefmt",
+    },
+    TreefmtInstallMethod {
+        label: "Nix",
+        command: "nix profile install nixpkgs#treefmt2",
+    },
+    TreefmtInstallMethod {
+        label: "Cargo",
+        command: "cargo install treefmt2",
+    },
+];
+
+pub fn catalog_formatters() -> impl Iterator<Item = &'static ToolDef> {
+    TOOL_CATALOG
+        .iter()
+        .filter(|t| t.category == ToolCategory::Formatter)
+}
+
+pub fn catalog_linters() -> impl Iterator<Item = &'static ToolDef> {
+    TOOL_CATALOG
+        .iter()
+        .filter(|t| t.category == ToolCategory::Linter)
+}
+
+/// Returns true if the given binary is on the PATH.
+pub fn is_binary_on_path(binary: &str) -> bool {
+    Command::new("which")
+        .arg(binary)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Install a tool with full terminal access. Caller must restore the terminal before calling this.
+pub fn install_tool(install_cmd: &str) -> Result<()> {
+    let status = Command::new("bash")
+        .args(["-c", install_cmd])
+        .status()
+        .context("failed to run install command")?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!(
+            "install exited with code {}",
+            status.code().unwrap_or(-1)
+        ))
+    }
+}
+
 pub enum HookProgress {
     Started {
         name: String,
@@ -68,35 +294,6 @@ pub enum HookProgress {
         install_hint: String,
     },
     AllPassed,
-}
-
-pub fn is_treefmt_installed() -> bool {
-    Command::new("treefmt")
-        .arg("--version")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
-
-/// Install treefmt with full terminal access.
-/// Caller must restore the terminal before calling this.
-pub fn install_treefmt() -> Result<()> {
-    // Try nix first, fall back to cargo
-    let status = Command::new("bash")
-        .args(["-c", "command -v nix-env >/dev/null 2>&1 && nix-env -iA nixpkgs.treefmt2 || cargo install treefmt2"])
-        .status()
-        .context("failed to install treefmt")?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(anyhow::anyhow!(
-            "treefmt install exited with code {}",
-            status.code().unwrap_or(-1)
-        ))
-    }
 }
 
 pub struct HookRunner {
@@ -358,6 +555,121 @@ mod tests {
     fn find_preset_returns_known_presets() {
         assert!(find_preset("treefmt").is_some());
         assert!(find_preset("unknown").is_none());
+    }
+
+    #[test]
+    fn tool_catalog_entries_are_valid() {
+        for tool in TOOL_CATALOG {
+            assert!(!tool.name.is_empty(), "tool name should not be empty");
+            assert!(
+                !tool.language.is_empty(),
+                "tool language should not be empty"
+            );
+            assert!(
+                !tool.check_binary.is_empty(),
+                "tool check_binary should not be empty"
+            );
+            // Formatters must have a treefmt_entry and empty hook_command.
+            // Linters must have no treefmt_entry and a non-empty hook_command.
+            match tool.category {
+                ToolCategory::Formatter => {
+                    assert!(
+                        tool.treefmt_entry.is_some(),
+                        "formatter '{}' must have a treefmt_entry",
+                        tool.name
+                    );
+                    assert!(
+                        tool.hook_command.is_empty(),
+                        "formatter '{}' must have empty hook_command, got '{}'",
+                        tool.name,
+                        tool.hook_command
+                    );
+                }
+                ToolCategory::Linter => {
+                    assert!(
+                        tool.treefmt_entry.is_none(),
+                        "linter '{}' must not have a treefmt_entry",
+                        tool.name
+                    );
+                    assert!(
+                        !tool.hook_command.is_empty(),
+                        "linter '{}' must have a non-empty hook_command",
+                        tool.name
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn tool_catalog_has_expected_entries() {
+        let names: Vec<&str> = TOOL_CATALOG.iter().map(|t| t.name).collect();
+        // Formatters (new treefmt-based entries)
+        assert!(
+            names.contains(&"biome format"),
+            "expected 'biome format' in catalog"
+        );
+        assert!(names.contains(&"gofmt"), "expected 'gofmt' in catalog");
+        // Linters
+        assert!(
+            names.contains(&"biome lint"),
+            "expected 'biome lint' in catalog"
+        );
+        assert!(names.contains(&"clippy"), "expected 'clippy' in catalog");
+        // The old single "biome" entry should no longer exist
+        assert!(
+            !names.contains(&"biome"),
+            "old 'biome' entry should be replaced by 'biome format' and 'biome lint'"
+        );
+    }
+
+    #[test]
+    fn tool_catalog_formatter_count() {
+        let count = catalog_formatters().count();
+        assert_eq!(count, 6, "expected exactly 6 formatters in TOOL_CATALOG");
+    }
+
+    #[test]
+    fn tool_catalog_linter_count() {
+        let count = catalog_linters().count();
+        assert_eq!(count, 5, "expected exactly 5 linters in TOOL_CATALOG");
+    }
+
+    #[test]
+    fn treefmt_install_methods_are_valid() {
+        for method in TREEFMT_INSTALL_METHODS {
+            assert!(
+                !method.label.is_empty(),
+                "TREEFMT_INSTALL_METHODS entry has empty label"
+            );
+            assert!(
+                !method.command.is_empty(),
+                "TREEFMT_INSTALL_METHODS entry '{}' has empty command",
+                method.label
+            );
+        }
+    }
+
+    #[test]
+    fn catalog_formatters_all_have_treefmt_entry() {
+        for tool in catalog_formatters() {
+            assert!(
+                tool.treefmt_entry.is_some(),
+                "formatter '{}' returned by catalog_formatters() must have treefmt_entry",
+                tool.name
+            );
+        }
+    }
+
+    #[test]
+    fn catalog_linters_none_have_treefmt_entry() {
+        for tool in catalog_linters() {
+            assert!(
+                tool.treefmt_entry.is_none(),
+                "linter '{}' returned by catalog_linters() must not have treefmt_entry",
+                tool.name
+            );
+        }
     }
 
     #[test]

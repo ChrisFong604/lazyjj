@@ -14,11 +14,14 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::text::{Line, Span};
 
 use crate::config::Config;
-use crate::hooks::{HookProgress, HookRunner};
+use crate::hooks::{
+    HookProgress, HookRunner, TOOL_CATALOG, TREEFMT_INSTALL_METHODS, catalog_formatters,
+    catalog_linters,
+};
 use crate::jj::JjClient;
 use crate::model::{
     Action, DiffKind, DiffLine, Focus, HookPhase, PromptKind, PromptState, RepoSnapshot,
-    TreefmtSetup,
+    ToolPickerEntry, ToolPickerState, TreefmtInstallState,
 };
 use crate::ui;
 
@@ -48,8 +51,10 @@ pub struct App {
     hook_runner: Option<HookRunner>,
     pub hook_phase: Option<HookPhase>,
     push_after_hooks: bool,
-    pub treefmt_setup: Option<TreefmtSetup>,
-    pub needs_treefmt_install: bool,
+    pub tool_picker: Option<ToolPickerState>,
+    pub treefmt_install_picker: Option<TreefmtInstallState>,
+    /// Install commands pending execution (tool name, install command).
+    pub pending_installs: Vec<(String, String)>,
     setup_dismissed: bool,
 }
 
@@ -81,8 +86,9 @@ impl App {
             hook_runner: None,
             hook_phase: None,
             push_after_hooks: false,
-            treefmt_setup: None,
-            needs_treefmt_install: false,
+            tool_picker: None,
+            treefmt_install_picker: None,
+            pending_installs: vec![],
             setup_dismissed: false,
         };
         app.recount_diff();
@@ -407,8 +413,34 @@ impl App {
         self.run_and_log(&["abandon", &revision], format!("abandon {revision}"))
     }
 
+    /// Build a ToolPickerState from TOOL_CATALOG, checking install status for each tool.
+    fn build_tool_picker() -> ToolPickerState {
+        let entries: Vec<ToolPickerEntry> = TOOL_CATALOG
+            .iter()
+            .map(|def| ToolPickerEntry {
+                name: def.name.to_owned(),
+                language: def.language.to_owned(),
+                hook_command: def.hook_command.to_owned(),
+                install_cmd: def.install_cmd.to_owned(),
+                installed: crate::hooks::is_binary_on_path(def.check_binary),
+                selected: false,
+                category: def.category,
+                check_binary: def.check_binary.to_owned(),
+            })
+            .collect();
+        let mut state = ToolPickerState {
+            entries,
+            cursor: 0,
+            rows: vec![],
+        };
+        let rows = state.build_rows();
+        state.cursor = ToolPickerState::first_tool_row(&rows);
+        state.rows = rows;
+        state
+    }
+
     fn push(&mut self) {
-        if self.hook_phase.is_some() || self.treefmt_setup.is_some() {
+        if self.hook_phase.is_some() || self.tool_picker.is_some() {
             return;
         }
         let hooks = &self.config.hooks.pre_push;
@@ -417,8 +449,7 @@ impl App {
                 self.execute_push();
             } else {
                 self.push_after_hooks = true;
-                let installed = crate::hooks::is_treefmt_installed();
-                self.treefmt_setup = Some(TreefmtSetup { installed });
+                self.tool_picker = Some(Self::build_tool_picker());
             }
         } else {
             self.push_after_hooks = true;
@@ -426,19 +457,67 @@ impl App {
         }
     }
 
-    fn on_setup_key(&mut self, key: KeyEvent) -> bool {
+    /// Handle keystrokes while the tool picker overlay is open.
+    /// Returns `true` if installs are needed (caller must handle terminal restore).
+    fn on_picker_key(&mut self, key: KeyEvent) -> bool {
+        let Some(picker) = &mut self.tool_picker else {
+            return false;
+        };
+
         match key.code {
-            KeyCode::Char('y') | KeyCode::Char('Y') => {
-                let needs_install =
-                    matches!(self.treefmt_setup, Some(TreefmtSetup { installed: false }));
-                if needs_install {
-                    return true; // signal caller to run treefmt install
+            KeyCode::Char('j') | KeyCode::Down => {
+                picker.move_cursor_down();
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                picker.move_cursor_up();
+            }
+            KeyCode::Char(' ') => {
+                if let Some(idx) = picker.cursor_entry_index()
+                    && let Some(entry) = picker.entries.get_mut(idx)
+                {
+                    entry.selected = !entry.selected;
                 }
-                self.enable_treefmt();
+            }
+            KeyCode::Enter => {
+                // Snapshot what needs to happen before clearing picker
+                let needs_install: Vec<(String, String)> = picker
+                    .needs_install()
+                    .into_iter()
+                    .map(|e| (e.name.clone(), e.install_cmd.clone()))
+                    .collect();
+                let has_selected = !picker.selected_entries().is_empty();
+                let has_formatters = !picker.selected_formatters().is_empty();
+
+                if !has_selected {
+                    // Nothing selected — dismiss like pressing Esc
+                    let should_push = self.push_after_hooks;
+                    self.tool_picker = None;
+                    self.setup_dismissed = true;
+                    self.push_after_hooks = false;
+                    if should_push {
+                        self.execute_push();
+                    }
+                    return false;
+                }
+
+                // If formatters are selected, check if treefmt is on PATH first
+                if has_formatters && !crate::hooks::is_binary_on_path("treefmt") {
+                    self.treefmt_install_picker = Some(TreefmtInstallState::new());
+                    return false;
+                }
+
+                if !needs_install.is_empty() {
+                    // Signal the run_loop to handle installs outside the TUI
+                    self.pending_installs = needs_install;
+                    return true;
+                }
+
+                // All selected tools already installed — write config and proceed
+                self.enable_selected_tools();
             }
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
                 let should_push = self.push_after_hooks;
-                self.treefmt_setup = None;
+                self.tool_picker = None;
                 self.setup_dismissed = true;
                 self.push_after_hooks = false;
                 if should_push {
@@ -450,14 +529,103 @@ impl App {
         false
     }
 
-    fn enable_treefmt(&mut self) {
-        self.treefmt_setup = None;
+    /// Handle keystrokes while the treefmt install sub-modal is open.
+    /// Returns `true` if installs are needed (caller must handle terminal restore).
+    fn on_treefmt_install_key(&mut self, key: KeyEvent) -> bool {
+        let Some(state) = &mut self.treefmt_install_picker else {
+            return false;
+        };
+
+        match key.code {
+            KeyCode::Char('j') | KeyCode::Down => {
+                let max = TREEFMT_INSTALL_METHODS.len().saturating_sub(1);
+                state.cursor = (state.cursor + 1).min(max);
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                state.cursor = state.cursor.saturating_sub(1);
+            }
+            KeyCode::Enter => {
+                let cursor = state.cursor;
+                // Dismiss sub-modal
+                self.treefmt_install_picker = None;
+
+                // Queue treefmt install + all tool installs
+                let treefmt_cmd = TREEFMT_INSTALL_METHODS[cursor].command.to_owned();
+                let treefmt_label = TREEFMT_INSTALL_METHODS[cursor].label.to_owned();
+
+                let mut installs: Vec<(String, String)> = vec![(treefmt_label, treefmt_cmd)];
+
+                if let Some(picker) = &self.tool_picker {
+                    let tool_installs: Vec<(String, String)> = picker
+                        .needs_install()
+                        .into_iter()
+                        .map(|e| (e.name.clone(), e.install_cmd.clone()))
+                        .collect();
+                    installs.extend(tool_installs);
+                }
+
+                self.pending_installs = installs;
+                return true;
+            }
+            KeyCode::Esc => {
+                // Dismiss sub-modal, go back to picker
+                self.treefmt_install_picker = None;
+            }
+            _ => {}
+        }
+        false
+    }
+
+    /// Write command hooks for all currently-selected tools, reload config, and start hooks.
+    pub fn enable_selected_tools(&mut self) {
+        let Some(picker) = self.tool_picker.take() else {
+            return;
+        };
+        let selected = picker.selected_entries();
+        if selected.is_empty() {
+            return;
+        }
+
         let repo_root = PathBuf::from(&self.repo_root);
-        if let Err(e) = crate::config::append_preset_hooks(&repo_root, &["treefmt"]) {
+
+        // Formatters: generate treefmt.toml and append a single "treefmt" preset hook
+        let selected_formatters = picker.selected_formatters();
+        if !selected_formatters.is_empty() {
+            let formatter_defs: Vec<&crate::hooks::ToolDef> = catalog_formatters()
+                .filter(|def| selected_formatters.iter().any(|e| e.name == def.name))
+                .collect();
+            if let Err(e) = crate::config::generate_treefmt_toml(&repo_root, &formatter_defs) {
+                self.push_output(format!("treefmt.toml generation failed: {e}"));
+            }
+            let already_has_treefmt = self
+                .config
+                .hooks
+                .pre_push
+                .iter()
+                .any(|h| h.preset.as_deref() == Some("treefmt"));
+            if !already_has_treefmt
+                && let Err(e) = crate::config::append_preset_hooks(&repo_root, &["treefmt"])
+            {
+                self.status_message = Some(format!("Failed to write config: {e}"));
+                self.push_output(format!("config write failed: {e}"));
+                return;
+            }
+        }
+
+        // Linters: write command-based hooks using catalog as the source of truth for commands
+        let selected_linters = picker.selected_linters();
+        let linter_pairs: Vec<(&str, &str)> = catalog_linters()
+            .filter(|def| selected_linters.iter().any(|e| e.name == def.name))
+            .map(|def| (def.name, def.hook_command))
+            .collect();
+        if !linter_pairs.is_empty()
+            && let Err(e) = crate::config::write_tool_hooks(&repo_root, &linter_pairs)
+        {
             self.status_message = Some(format!("Failed to write config: {e}"));
             self.push_output(format!("config write failed: {e}"));
             return;
         }
+
         match crate::config::load(&repo_root) {
             Ok(cfg) => self.config = cfg,
             Err(e) => {
@@ -466,19 +634,24 @@ impl App {
                 return;
             }
         }
-        self.push_output("Enabled treefmt in .lazyjj.toml".to_owned());
+
+        let names: Vec<&str> = selected.iter().map(|e| e.name.as_str()).collect();
+        self.push_output(format!(
+            "Enabled tools in .lazyjj.toml: {}",
+            names.join(", ")
+        ));
+
         let hooks = self.config.hooks.pre_push.clone();
         self.start_hooks(hooks);
     }
 
     fn run_hooks_only(&mut self) {
-        if self.hook_phase.is_some() || self.treefmt_setup.is_some() {
+        if self.hook_phase.is_some() || self.tool_picker.is_some() {
             return;
         }
         let hooks = &self.config.hooks.pre_push;
         if hooks.is_empty() {
-            let installed = crate::hooks::is_treefmt_installed();
-            self.treefmt_setup = Some(TreefmtSetup { installed });
+            self.tool_picker = Some(Self::build_tool_picker());
             return;
         }
         self.push_after_hooks = false;
@@ -751,10 +924,13 @@ impl App {
             return false;
         }
 
-        if self.treefmt_setup.is_some() {
-            if self.on_setup_key(key) {
-                self.needs_treefmt_install = true;
-            }
+        if self.treefmt_install_picker.is_some() {
+            self.on_treefmt_install_key(key);
+            return false;
+        }
+
+        if self.tool_picker.is_some() {
+            self.on_picker_key(key);
             return false;
         }
 
@@ -976,10 +1152,10 @@ pub fn run() -> Result<()> {
 
 fn run_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, mut app: App) -> Result<()> {
     loop {
-        // Handle treefmt install request (needs full terminal access)
-        if app.needs_treefmt_install {
-            app.needs_treefmt_install = false;
-            run_treefmt_install(terminal, &mut app)?;
+        // Handle tool installs that require full terminal access
+        if !app.pending_installs.is_empty() {
+            let installs = std::mem::take(&mut app.pending_installs);
+            run_tool_installs(terminal, &mut app, installs)?;
             continue;
         }
 
@@ -994,17 +1170,32 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, mut app: App) -> 
     }
 }
 
-fn run_treefmt_install(
+/// Temporarily restore terminal, run installs sequentially, then re-enter TUI
+/// and write config for the tools that are now installed.
+fn run_tool_installs(
     terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     app: &mut App,
+    installs: Vec<(String, String)>,
 ) -> Result<()> {
-    // Temporarily restore terminal for the installer
+    // Leave TUI for the installer
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
 
-    println!("\n--- Installing treefmt ---\n");
-    let result = crate::hooks::install_treefmt();
+    let mut failed: Vec<String> = vec![];
+    for (name, cmd) in &installs {
+        println!("\n--- Installing {name} ---\n");
+        match crate::hooks::install_tool(cmd) {
+            Ok(()) => {
+                app.push_output(format!("✓ {name} installed successfully"));
+            }
+            Err(e) => {
+                eprintln!("✗ {name} install failed: {e}");
+                app.push_output(format!("✗ {name} install failed: {e}"));
+                failed.push(name.clone());
+            }
+        }
+    }
     println!();
 
     // Re-enter TUI
@@ -1013,19 +1204,24 @@ fn run_treefmt_install(
     terminal.hide_cursor()?;
     terminal.clear()?;
 
-    match result {
-        Ok(()) => {
-            app.push_output("✓ treefmt installed successfully".to_owned());
-            app.treefmt_setup = None;
-            app.enable_treefmt();
+    // Update install status in picker entries and proceed
+    if let Some(picker) = &mut app.tool_picker {
+        for entry in &mut picker.entries {
+            if entry.selected {
+                entry.installed = crate::hooks::is_binary_on_path(&entry.check_binary);
+            }
         }
-        Err(e) => {
-            app.push_output(format!("✗ treefmt install failed: {e}"));
-            app.treefmt_setup = Some(TreefmtSetup { installed: false });
-            app.status_message =
-                Some("treefmt installation failed — try installing manually".to_owned());
+        // Remove entries for tools that failed to install
+        for name in &failed {
+            if let Some(entry) = picker.entries.iter_mut().find(|e| &e.name == name) {
+                entry.selected = false;
+            }
         }
     }
+
+    // Write config for tools that are now selected and installed
+    app.enable_selected_tools();
+
     Ok(())
 }
 
@@ -1151,5 +1347,103 @@ mod tests {
         assert_eq!(app.focus, Focus::Bookmarks);
         assert!(!app.dispatch(Action::FocusNext));
         assert_eq!(app.focus, Focus::Revisions);
+    }
+
+    #[test]
+    fn tool_picker_cursor_navigation() {
+        let mut app = test_app();
+        app.tool_picker = Some(App::build_tool_picker());
+        let picker = app.tool_picker.as_ref().unwrap();
+        let initial_cursor = picker.cursor;
+        // With header-aware rows the first row is a Header, so the cursor starts at the
+        // first Entry row (index 1 in the rows vec).
+        assert!(
+            initial_cursor > 0,
+            "cursor should start past the first header"
+        );
+        let first_entry_cursor = initial_cursor;
+
+        // Move down — should advance to the next Entry row
+        app.on_picker_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('j'),
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        let after_down = app.tool_picker.as_ref().unwrap().cursor;
+        assert!(
+            after_down > first_entry_cursor,
+            "cursor should have moved down"
+        );
+
+        // Move up — should go back to first entry
+        app.on_picker_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('k'),
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        assert_eq!(
+            app.tool_picker.as_ref().unwrap().cursor,
+            first_entry_cursor,
+            "cursor should return to first entry"
+        );
+
+        // Cannot go above first entry row
+        app.on_picker_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('k'),
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        assert_eq!(
+            app.tool_picker.as_ref().unwrap().cursor,
+            first_entry_cursor,
+            "cursor should not move above first entry row"
+        );
+    }
+
+    #[test]
+    fn tool_picker_space_toggles_selection() {
+        let mut app = test_app();
+        app.tool_picker = Some(App::build_tool_picker());
+
+        // Toggle on
+        app.on_picker_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char(' '),
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        assert!(app.tool_picker.as_ref().unwrap().entries[0].selected);
+
+        // Toggle off
+        app.on_picker_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char(' '),
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        assert!(!app.tool_picker.as_ref().unwrap().entries[0].selected);
+    }
+
+    #[test]
+    fn tool_picker_esc_dismisses_without_push() {
+        let mut app = test_app();
+        app.tool_picker = Some(App::build_tool_picker());
+        app.push_after_hooks = false;
+
+        app.on_picker_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Esc,
+            crossterm::event::KeyModifiers::NONE,
+        ));
+
+        assert!(app.tool_picker.is_none());
+        assert!(app.setup_dismissed);
+    }
+
+    #[test]
+    fn build_tool_picker_populates_all_catalog_entries() {
+        let picker = App::build_tool_picker();
+        assert_eq!(
+            picker.entries.len(),
+            crate::hooks::TOOL_CATALOG.len(),
+            "picker should have one entry per catalog tool"
+        );
+        for (entry, def) in picker.entries.iter().zip(crate::hooks::TOOL_CATALOG.iter()) {
+            assert_eq!(entry.name, def.name);
+            assert_eq!(entry.language, def.language);
+            assert_eq!(entry.hook_command, def.hook_command);
+        }
     }
 }
