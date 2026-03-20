@@ -12,6 +12,7 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::text::{Line, Span};
 
+use crate::config::Config;
 use crate::jj::JjClient;
 use crate::model::{Action, DiffKind, DiffLine, Focus, PromptKind, PromptState, RepoSnapshot};
 use crate::ui;
@@ -19,6 +20,8 @@ use crate::ui;
 pub struct App {
     pub repo_root: String,
     client: JjClient,
+    #[allow(dead_code)]
+    pub config: Config,
     pub status_summary: Vec<String>,
     pub files: Vec<crate::model::FileEntry>,
     pub revisions: Vec<crate::model::RevisionEntry>,
@@ -41,10 +44,11 @@ pub struct App {
 }
 
 impl App {
-    fn new(snapshot: RepoSnapshot, client: JjClient) -> Self {
+    fn new(snapshot: RepoSnapshot, client: JjClient, config: Config) -> Self {
         let mut app = Self {
             repo_root: snapshot.root,
             client,
+            config,
             status_summary: snapshot.status_summary,
             files: snapshot.files,
             revisions: snapshot.revisions,
@@ -630,6 +634,8 @@ pub fn run() -> Result<()> {
     let cwd = std::env::current_dir().context("failed to determine current working directory")?;
     let client = JjClient::discover(&cwd)?;
     let snapshot = client.snapshot()?;
+    let config =
+        crate::config::load(std::path::Path::new(&snapshot.root)).context("config error")?;
 
     install_panic_hook();
     enable_raw_mode().context("failed to enable raw mode")?;
@@ -639,7 +645,7 @@ pub fn run() -> Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend).context("failed to initialize terminal")?;
 
-    let app = App::new(snapshot, client);
+    let app = App::new(snapshot, client, config);
     let result = run_loop(&mut terminal, app);
 
     restore_terminal(terminal)?;
@@ -707,6 +713,7 @@ fn install_panic_hook() {
 #[cfg(test)]
 mod tests {
     use super::{App, adjust_index, clamp_index};
+    use crate::config::Config;
     use crate::jj::JjClient;
     use crate::model::{Action, DiffKind, DiffLine, Focus, PromptKind, RepoSnapshot};
 
@@ -727,6 +734,7 @@ mod tests {
                 }],
             },
             client,
+            Config::default(),
         )
     }
 

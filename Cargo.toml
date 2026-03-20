@@ -7,3 +7,5 @@ edition = "2024"
 anyhow = "1.0"
 crossterm = "0.28"
 ratatui = "0.29"
+serde = { version = "1.0.228", features = ["derive"] }
+toml = "1.0.7"
