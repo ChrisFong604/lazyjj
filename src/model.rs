@@ -120,6 +120,8 @@ pub enum Action {
     JumpToEnd,
     OpenPrompt(PromptKind),
     Undo,
+    Push,
+    Fetch,
 }
 
 #[derive(Debug, Clone)]

@@ -82,6 +82,19 @@ impl JjClient {
         Ok(parse_diff(&output.stdout))
     }
 
+    pub fn git_push(&self, bookmark: Option<&str>) -> Result<CommandOutput> {
+        let mut args = vec!["git", "push"];
+        if let Some(name) = bookmark {
+            args.push("--bookmark");
+            args.push(name);
+        }
+        self.run(&args)
+    }
+
+    pub fn git_fetch(&self) -> Result<CommandOutput> {
+        self.run(&["git", "fetch"])
+    }
+
     pub fn run_mutation(&self, args: &[&str]) -> Result<CommandOutput> {
         self.run(args)
     }

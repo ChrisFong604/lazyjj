@@ -1,5 +1,9 @@
 # AGENTS.md
 
+## Source of Truth
+
+The project roadmap, task board, and feature plans live on Notion (workspace page: "lazyjj"). Always consult Notion for phase definitions, task priorities, and implementation specs before starting work.
+
 ## Project Brief
 
 `lazyjj` is a Rust terminal UI for Jujutsu (`jj`) with `lazygit` as the product reference, but not as a Git-centric implementation constraint.

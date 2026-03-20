@@ -391,6 +391,61 @@ impl App {
         self.run_and_log(&["abandon", &revision], format!("abandon {revision}"))
     }
 
+    fn push(&mut self) {
+        let bookmark = self.selected_bookmark().map(|b| b.name.clone());
+        let result = match &bookmark {
+            Some(name) => self.client.git_push(Some(name)),
+            None => self.client.git_push(None),
+        };
+        match result {
+            Ok(output) => {
+                let label = match &bookmark {
+                    Some(name) => format!("push bookmark {name}"),
+                    None => "push all".to_owned(),
+                };
+                self.push_output(format!(
+                    "$ jj git push{}",
+                    bookmark
+                        .as_ref()
+                        .map(|n| format!(" --bookmark {n}"))
+                        .unwrap_or_default()
+                ));
+                if !output.stdout.trim().is_empty() {
+                    self.push_output(output.stdout.trim().to_owned());
+                }
+                if !output.stderr.trim().is_empty() {
+                    self.push_output(output.stderr.trim().to_owned());
+                }
+                self.status_message = Some(format!("Executed {label}"));
+                self.refresh();
+            }
+            Err(error) => {
+                self.status_message = Some(error.to_string());
+                self.push_output(format!("push failed: {error}"));
+            }
+        }
+    }
+
+    fn fetch(&mut self) {
+        match self.client.git_fetch() {
+            Ok(output) => {
+                self.push_output("$ jj git fetch".to_owned());
+                if !output.stdout.trim().is_empty() {
+                    self.push_output(output.stdout.trim().to_owned());
+                }
+                if !output.stderr.trim().is_empty() {
+                    self.push_output(output.stderr.trim().to_owned());
+                }
+                self.status_message = Some("Executed fetch".to_owned());
+                self.refresh();
+            }
+            Err(error) => {
+                self.status_message = Some(error.to_string());
+                self.push_output(format!("fetch failed: {error}"));
+            }
+        }
+    }
+
     fn undo(&mut self) -> Result<()> {
         self.run_and_log(&["undo"], "undo last operation".to_owned())
     }
@@ -492,6 +547,8 @@ impl App {
             (KeyCode::Char('a'), _) => Action::OpenPrompt(PromptKind::ConfirmAbandon),
             (KeyCode::Char('u'), _) => Action::Undo,
             (KeyCode::Char('o'), _) => Action::OpenPrompt(PromptKind::RestoreOperation),
+            (KeyCode::Char('P'), _) => Action::Push,
+            (KeyCode::Char('F'), _) => Action::Fetch,
             _ => return None,
         };
         Some(action)
@@ -519,6 +576,8 @@ impl App {
                     self.refresh();
                 }
             }
+            Action::Push => self.push(),
+            Action::Fetch => self.fetch(),
         }
         false
     }
