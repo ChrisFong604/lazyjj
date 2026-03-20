@@ -161,3 +161,9 @@ pub struct RepoSnapshot {
     pub operations: Vec<OperationEntry>,
     pub initial_diff: Vec<DiffLine>,
 }
+
+/// Shown to offer treefmt integration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TreefmtSetup {
+    pub installed: bool,
+}

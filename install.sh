@@ -73,12 +73,20 @@ if [[ ":$PATH:" != *":${BIN_DIR}:"* ]]; then
   export PATH="${BIN_DIR}:$PATH"
 fi
 
-if [[ -n "${INSTALLED_VERSION}" && "${INSTALLED_VERSION}" == "${PACKAGE_VERSION}" ]]; then
+FORCE=false
+for arg in "$@"; do
+  case "${arg}" in
+    --force|-f) FORCE=true ;;
+  esac
+done
+
+if [[ "${FORCE}" == false && -n "${INSTALLED_VERSION}" && "${INSTALLED_VERSION}" == "${PACKAGE_VERSION}" ]]; then
   echo "lazyjj v${PACKAGE_VERSION} is already installed globally; skipping reinstall"
+  echo "Use --force to reinstall anyway"
   INSTALL_STATUS="already installed"
 else
   echo "Installing lazyjj v${PACKAGE_VERSION} from ${SCRIPT_DIR}"
-  cargo install --path "${SCRIPT_DIR}" --locked
+  cargo install --path "${SCRIPT_DIR}" --force
 fi
 
 for profile in "${profile_targets[@]}"; do

@@ -8,7 +8,7 @@ use ratatui::widgets::{
 
 use crate::app::App;
 use crate::hooks;
-use crate::model::{DiffKind, Focus, HookPhase, PromptState};
+use crate::model::{DiffKind, Focus, HookPhase, PromptState, TreefmtSetup};
 
 pub fn render(frame: &mut Frame<'_>, app: &App) {
     let root = Layout::default()
@@ -28,6 +28,8 @@ pub fn render(frame: &mut Frame<'_>, app: &App) {
 
     if let Some(phase) = &app.hook_phase {
         render_hook_overlay(frame, phase);
+    } else if let Some(setup) = &app.treefmt_setup {
+        render_treefmt_setup(frame, setup);
     } else if let Some(prompt) = &app.prompt {
         render_prompt(frame, prompt);
     } else if app.show_help {
@@ -391,6 +393,94 @@ fn render_hook_overlay(frame: &mut Frame<'_>, phase: &HookPhase) {
                 .borders(Borders::ALL)
                 .title(title.to_owned())
                 .border_style(Style::default().fg(border_color)),
+        )
+        .wrap(Wrap { trim: false });
+    frame.render_widget(paragraph, area);
+}
+
+fn render_treefmt_setup(frame: &mut Frame<'_>, setup: &TreefmtSetup) {
+    let area = centered_rect(60, 50, frame.area());
+    frame.render_widget(Clear, area);
+
+    let installed = setup.installed;
+    let lines = {
+        let action = if installed {
+            "Enable"
+        } else {
+            "Install & Enable"
+        };
+        let mut lines = vec![
+            Line::from(Span::styled(
+                format!("{action} treefmt?"),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::raw(""),
+            Line::from(Span::styled(
+                "  treefmt runs all your project's formatters with a",
+                Style::default().fg(Color::White),
+            )),
+            Line::from(Span::styled(
+                "  single command. Configure which formatters to use in",
+                Style::default().fg(Color::White),
+            )),
+            Line::from(Span::styled(
+                "  treefmt.toml (rustfmt, prettier, black, gofmt, etc).",
+                Style::default().fg(Color::White),
+            )),
+            Line::raw(""),
+            Line::from(Span::styled(
+                "  Open source — https://github.com/numtide/treefmt",
+                Style::default().fg(Color::Gray),
+            )),
+            Line::raw(""),
+        ];
+        if installed {
+            lines.push(Line::from(Span::styled(
+                "  ✓ treefmt is installed",
+                Style::default().fg(Color::Green),
+            )));
+        } else {
+            lines.push(Line::from(Span::styled(
+                "  Will install via nix-env or cargo install",
+                Style::default().fg(Color::Gray),
+            )));
+        }
+        lines.push(Line::raw(""));
+        lines.push(Line::from(Span::styled(
+            "  You can disable it anytime by editing .lazyjj.toml",
+            Style::default().fg(Color::DarkGray),
+        )));
+        lines.push(Line::raw(""));
+        lines.push(Line::from(vec![
+            Span::styled(
+                "  y",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                if installed { " enable  " } else { " install  " },
+                Style::default().fg(Color::Gray),
+            ),
+            Span::styled(
+                "n",
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" no  ", Style::default().fg(Color::Gray)),
+            Span::styled("Esc", Style::default().fg(Color::Gray)),
+            Span::styled(" skip", Style::default().fg(Color::Gray)),
+        ]));
+        lines
+    };
+
+    let paragraph = Paragraph::new(Text::from(lines))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Setup")
+                .border_style(Style::default().fg(Color::Yellow)),
         )
         .wrap(Wrap { trim: false });
     frame.render_widget(paragraph, area);

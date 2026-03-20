@@ -18,6 +18,7 @@ use crate::hooks::{HookProgress, HookRunner};
 use crate::jj::JjClient;
 use crate::model::{
     Action, DiffKind, DiffLine, Focus, HookPhase, PromptKind, PromptState, RepoSnapshot,
+    TreefmtSetup,
 };
 use crate::ui;
 
@@ -47,6 +48,9 @@ pub struct App {
     hook_runner: Option<HookRunner>,
     pub hook_phase: Option<HookPhase>,
     push_after_hooks: bool,
+    pub treefmt_setup: Option<TreefmtSetup>,
+    pub needs_treefmt_install: bool,
+    setup_dismissed: bool,
 }
 
 impl App {
@@ -77,6 +81,9 @@ impl App {
             hook_runner: None,
             hook_phase: None,
             push_after_hooks: false,
+            treefmt_setup: None,
+            needs_treefmt_install: false,
+            setup_dismissed: false,
         };
         app.recount_diff();
         app
@@ -401,30 +408,95 @@ impl App {
     }
 
     fn push(&mut self) {
-        if self.hook_phase.is_some() {
+        if self.hook_phase.is_some() || self.treefmt_setup.is_some() {
             return;
         }
         let hooks = &self.config.hooks.pre_push;
         if hooks.is_empty() {
-            self.execute_push();
+            if self.setup_dismissed {
+                self.execute_push();
+            } else {
+                self.push_after_hooks = true;
+                let installed = crate::hooks::is_treefmt_installed();
+                self.treefmt_setup = Some(TreefmtSetup { installed });
+            }
         } else {
             self.push_after_hooks = true;
             self.start_hooks(hooks.clone());
         }
     }
 
+    fn on_setup_key(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                let needs_install =
+                    matches!(self.treefmt_setup, Some(TreefmtSetup { installed: false }));
+                if needs_install {
+                    return true; // signal caller to run treefmt install
+                }
+                self.enable_treefmt();
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                let should_push = self.push_after_hooks;
+                self.treefmt_setup = None;
+                self.setup_dismissed = true;
+                self.push_after_hooks = false;
+                if should_push {
+                    self.execute_push();
+                }
+            }
+            _ => {}
+        }
+        false
+    }
+
+    fn enable_treefmt(&mut self) {
+        self.treefmt_setup = None;
+        let repo_root = PathBuf::from(&self.repo_root);
+        if let Err(e) = crate::config::append_preset_hooks(&repo_root, &["treefmt"]) {
+            self.status_message = Some(format!("Failed to write config: {e}"));
+            self.push_output(format!("config write failed: {e}"));
+            return;
+        }
+        match crate::config::load(&repo_root) {
+            Ok(cfg) => self.config = cfg,
+            Err(e) => {
+                self.status_message = Some(format!("Failed to reload config: {e}"));
+                self.push_output(format!("config reload failed: {e}"));
+                return;
+            }
+        }
+        self.push_output("Enabled treefmt in .lazyjj.toml".to_owned());
+        let hooks = self.config.hooks.pre_push.clone();
+        self.start_hooks(hooks);
+    }
+
     fn run_hooks_only(&mut self) {
-        if self.hook_phase.is_some() {
+        if self.hook_phase.is_some() || self.treefmt_setup.is_some() {
             return;
         }
         let hooks = &self.config.hooks.pre_push;
         if hooks.is_empty() {
-            self.status_message =
-                Some("No hooks configured — add [[hooks.pre_push]] to .lazyjj.toml".to_owned());
+            let installed = crate::hooks::is_treefmt_installed();
+            self.treefmt_setup = Some(TreefmtSetup { installed });
             return;
         }
         self.push_after_hooks = false;
         self.start_hooks(hooks.clone());
+    }
+
+    fn reset_broken_presets(&mut self) {
+        let repo = std::path::Path::new(&self.repo_root);
+        if let Err(e) = crate::config::remove_preset_hooks(repo) {
+            self.push_output(format!("failed to remove preset hooks: {e}"));
+            return;
+        }
+        match crate::config::load(repo) {
+            Ok(cfg) => self.config = cfg,
+            Err(e) => self.push_output(format!("config reload failed: {e}")),
+        }
+        self.setup_dismissed = false;
+        self.push_output("Removed broken preset hooks from .lazyjj.toml".to_owned());
     }
 
     fn start_hooks(&mut self, hooks: Vec<crate::config::HookEntry>) {
@@ -557,6 +629,7 @@ impl App {
                 }
                 HookProgress::NotFound { name, install_hint } => {
                     self.push_output(format!("✗ Hook '{name}': {install_hint}"));
+                    self.reset_broken_presets();
                     self.hook_runner = None;
                     self.hook_phase = Some(HookPhase::Failed {
                         message: format!("Hook '{name}': {install_hint}"),
@@ -674,6 +747,13 @@ impl App {
                     }
                     _ => {}
                 },
+            }
+            return false;
+        }
+
+        if self.treefmt_setup.is_some() {
+            if self.on_setup_key(key) {
+                self.needs_treefmt_install = true;
             }
             return false;
         }
@@ -896,6 +976,13 @@ pub fn run() -> Result<()> {
 
 fn run_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, mut app: App) -> Result<()> {
     loop {
+        // Handle treefmt install request (needs full terminal access)
+        if app.needs_treefmt_install {
+            app.needs_treefmt_install = false;
+            run_treefmt_install(terminal, &mut app)?;
+            continue;
+        }
+
         app.tick();
         terminal.draw(|frame| ui::render(frame, &app))?;
         if event::poll(Duration::from_millis(120))?
@@ -905,6 +992,41 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, mut app: App) -> 
             return Ok(());
         }
     }
+}
+
+fn run_treefmt_install(
+    terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    app: &mut App,
+) -> Result<()> {
+    // Temporarily restore terminal for the installer
+    disable_raw_mode()?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    terminal.show_cursor()?;
+
+    println!("\n--- Installing treefmt ---\n");
+    let result = crate::hooks::install_treefmt();
+    println!();
+
+    // Re-enter TUI
+    enable_raw_mode()?;
+    execute!(terminal.backend_mut(), EnterAlternateScreen)?;
+    terminal.hide_cursor()?;
+    terminal.clear()?;
+
+    match result {
+        Ok(()) => {
+            app.push_output("✓ treefmt installed successfully".to_owned());
+            app.treefmt_setup = None;
+            app.enable_treefmt();
+        }
+        Err(e) => {
+            app.push_output(format!("✗ treefmt install failed: {e}"));
+            app.treefmt_setup = Some(TreefmtSetup { installed: false });
+            app.status_message =
+                Some("treefmt installation failed — try installing manually".to_owned());
+        }
+    }
+    Ok(())
 }
 
 fn restore_terminal(mut terminal: Terminal<CrosstermBackend<Stdout>>) -> Result<()> {

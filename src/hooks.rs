@@ -5,6 +5,8 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use anyhow::{Context, Result};
+
 use crate::config::HookEntry;
 
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
@@ -22,62 +24,23 @@ struct PresetDef {
     install_url: &'static str,
 }
 
-const PRESETS: &[(&str, PresetDef)] = &[
-    (
-        "biome",
-        PresetDef {
-            program: "biome",
-            args: &["check", "."],
-            local_paths: &["node_modules/.bin/biome"],
-            install_url: "https://biomejs.dev/guides/getting-started/",
-        },
-    ),
-    (
-        "prettier",
-        PresetDef {
-            program: "prettier",
-            args: &["--check", "."],
-            local_paths: &["node_modules/.bin/prettier"],
-            install_url: "https://prettier.io/docs/en/install.html",
-        },
-    ),
-    (
-        "eslint",
-        PresetDef {
-            program: "eslint",
-            args: &["."],
-            local_paths: &["node_modules/.bin/eslint"],
-            install_url: "https://eslint.org/docs/latest/use/getting-started",
-        },
-    ),
-    (
-        "rustfmt",
-        PresetDef {
-            program: "cargo",
-            args: &["fmt", "--", "--check"],
-            local_paths: &[],
-            install_url: "https://github.com/rust-lang/rustfmt",
-        },
-    ),
-    (
-        "clippy",
-        PresetDef {
-            program: "cargo",
-            args: &["clippy", "--", "-D", "warnings"],
-            local_paths: &[],
-            install_url: "https://github.com/rust-lang/rust-clippy",
-        },
-    ),
-    (
-        "ruff",
-        PresetDef {
-            program: "ruff",
-            args: &["check", "."],
-            local_paths: &[],
-            install_url: "https://docs.astral.sh/ruff/installation/",
-        },
-    ),
-];
+const PRESETS: &[(&str, PresetDef)] = &[(
+    "treefmt",
+    PresetDef {
+        program: "treefmt",
+        args: &["--fail-on-change", "--no-cache"],
+        local_paths: &[],
+        install_url: "https://github.com/numtide/treefmt",
+    },
+)];
+
+pub fn preset_names() -> Vec<&'static str> {
+    PRESETS.iter().map(|(name, _)| *name).collect()
+}
+
+pub fn is_known_preset(name: &str) -> bool {
+    PRESETS.iter().any(|(n, _)| *n == name)
+}
 
 fn find_preset(name: &str) -> Option<&'static PresetDef> {
     PRESETS.iter().find(|(n, _)| *n == name).map(|(_, d)| d)
@@ -105,6 +68,35 @@ pub enum HookProgress {
         install_hint: String,
     },
     AllPassed,
+}
+
+pub fn is_treefmt_installed() -> bool {
+    Command::new("treefmt")
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Install treefmt with full terminal access.
+/// Caller must restore the terminal before calling this.
+pub fn install_treefmt() -> Result<()> {
+    // Try nix first, fall back to cargo
+    let status = Command::new("bash")
+        .args(["-c", "command -v nix-env >/dev/null 2>&1 && nix-env -iA nixpkgs.treefmt2 || cargo install treefmt2"])
+        .status()
+        .context("failed to install treefmt")?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!(
+            "treefmt install exited with code {}",
+            status.code().unwrap_or(-1)
+        ))
+    }
 }
 
 pub struct HookRunner {
@@ -327,6 +319,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn preset_names_matches_presets_constant() {
+        let names = preset_names();
+        assert_eq!(names.len(), PRESETS.len());
+        for (i, name) in names.iter().enumerate() {
+            assert_eq!(*name, PRESETS[i].0);
+        }
+    }
+
+    #[test]
+    fn is_known_preset_accepts_valid() {
+        assert!(is_known_preset("treefmt"));
+    }
+
+    #[test]
+    fn is_known_preset_rejects_unknown() {
+        assert!(!is_known_preset("unknown_tool"));
+    }
+
+    #[test]
     fn spinner_cycles_through_frames() {
         let first = spinner_char(0);
         let second = spinner_char(1);
@@ -345,12 +356,7 @@ mod tests {
 
     #[test]
     fn find_preset_returns_known_presets() {
-        assert!(find_preset("biome").is_some());
-        assert!(find_preset("prettier").is_some());
-        assert!(find_preset("eslint").is_some());
-        assert!(find_preset("rustfmt").is_some());
-        assert!(find_preset("clippy").is_some());
-        assert!(find_preset("ruff").is_some());
+        assert!(find_preset("treefmt").is_some());
         assert!(find_preset("unknown").is_none());
     }
 
