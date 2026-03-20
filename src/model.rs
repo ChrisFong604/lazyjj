@@ -122,6 +122,7 @@ pub enum Action {
     Undo,
     Push,
     Fetch,
+    RunHooks,
 }
 
 #[derive(Debug, Clone)]

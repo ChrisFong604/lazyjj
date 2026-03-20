@@ -46,6 +46,7 @@ pub struct App {
     pub prompt: Option<PromptState>,
     hook_runner: Option<HookRunner>,
     pub hook_phase: Option<HookPhase>,
+    push_after_hooks: bool,
 }
 
 impl App {
@@ -75,6 +76,7 @@ impl App {
             prompt: None,
             hook_runner: None,
             hook_phase: None,
+            push_after_hooks: false,
         };
         app.recount_diff();
         app
@@ -406,15 +408,35 @@ impl App {
         if hooks.is_empty() {
             self.execute_push();
         } else {
-            let runner = HookRunner::start(hooks.clone(), PathBuf::from(&self.repo_root));
-            self.hook_runner = Some(runner);
-            self.hook_phase = Some(HookPhase::Running {
-                current_hook: String::new(),
-                index: 0,
-                total: hooks.len(),
-                spinner_tick: 0,
-            });
+            self.push_after_hooks = true;
+            self.start_hooks(hooks.clone());
         }
+    }
+
+    fn run_hooks_only(&mut self) {
+        if self.hook_phase.is_some() {
+            return;
+        }
+        let hooks = &self.config.hooks.pre_push;
+        if hooks.is_empty() {
+            self.status_message =
+                Some("No hooks configured — add [[hooks.pre_push]] to .lazyjj.toml".to_owned());
+            return;
+        }
+        self.push_after_hooks = false;
+        self.start_hooks(hooks.clone());
+    }
+
+    fn start_hooks(&mut self, hooks: Vec<crate::config::HookEntry>) {
+        let total = hooks.len();
+        let runner = HookRunner::start(hooks, PathBuf::from(&self.repo_root));
+        self.hook_runner = Some(runner);
+        self.hook_phase = Some(HookPhase::Running {
+            current_hook: String::new(),
+            index: 0,
+            total,
+            spinner_tick: 0,
+        });
     }
 
     fn execute_push(&mut self) {
@@ -465,7 +487,12 @@ impl App {
         {
             if *ticks_remaining == 0 {
                 self.hook_phase = None;
-                self.execute_push();
+                if self.push_after_hooks {
+                    self.push_after_hooks = false;
+                    self.execute_push();
+                } else {
+                    self.status_message = Some("✓ All hooks passed".to_owned());
+                }
             } else {
                 *ticks_remaining -= 1;
             }
@@ -625,14 +652,20 @@ impl App {
                     KeyCode::Esc => {
                         self.hook_runner = None;
                         self.hook_phase = None;
-                        self.status_message = Some("Push cancelled".to_owned());
+                        self.push_after_hooks = false;
+                        self.status_message = Some("Hooks cancelled".to_owned());
                     }
                     _ => {}
                 },
                 HookPhase::Passed { .. } => {
-                    // Any key skips the toast and pushes immediately
+                    // Any key skips the toast
                     self.hook_phase = None;
-                    self.execute_push();
+                    if self.push_after_hooks {
+                        self.push_after_hooks = false;
+                        self.execute_push();
+                    } else {
+                        self.status_message = Some("✓ All hooks passed".to_owned());
+                    }
                 }
                 HookPhase::Failed { .. } => match key.code {
                     KeyCode::Char('q') => return true,
@@ -697,6 +730,7 @@ impl App {
             (KeyCode::Char('o'), _) => Action::OpenPrompt(PromptKind::RestoreOperation),
             (KeyCode::Char('P'), _) => Action::Push,
             (KeyCode::Char('F'), _) => Action::Fetch,
+            (KeyCode::Char('H'), _) => Action::RunHooks,
             _ => return None,
         };
         Some(action)
@@ -726,6 +760,7 @@ impl App {
             }
             Action::Push => self.push(),
             Action::Fetch => self.fetch(),
+            Action::RunHooks => self.run_hooks_only(),
         }
         false
     }
