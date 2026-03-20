@@ -20,6 +20,7 @@ pub struct HookEntry {
     pub name: String,
     pub preset: Option<String>,
     pub command: Option<String>,
+    pub timeout_secs: Option<u64>,
 }
 
 impl HookEntry {
@@ -122,6 +123,7 @@ command = "cargo clippy -- -D warnings"
             name: "bad".to_owned(),
             preset: Some("biome".to_owned()),
             command: Some("echo hi".to_owned()),
+            timeout_secs: None,
         };
         assert!(hook.validate().is_err());
     }
@@ -132,6 +134,7 @@ command = "cargo clippy -- -D warnings"
             name: "empty".to_owned(),
             preset: None,
             command: None,
+            timeout_secs: None,
         };
         assert!(hook.validate().is_err());
     }

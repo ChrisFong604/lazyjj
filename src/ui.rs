@@ -7,7 +7,8 @@ use ratatui::widgets::{
 };
 
 use crate::app::App;
-use crate::model::{DiffKind, Focus, PromptState};
+use crate::hooks;
+use crate::model::{DiffKind, Focus, HookPhase, PromptState};
 
 pub fn render(frame: &mut Frame<'_>, app: &App) {
     let root = Layout::default()
@@ -25,7 +26,9 @@ pub fn render(frame: &mut Frame<'_>, app: &App) {
     render_output(frame, app, root[2]);
     render_footer(frame, app, root[3]);
 
-    if let Some(prompt) = &app.prompt {
+    if let Some(phase) = &app.hook_phase {
+        render_hook_overlay(frame, phase);
+    } else if let Some(prompt) = &app.prompt {
         render_prompt(frame, prompt);
     } else if app.show_help {
         render_help(frame);
@@ -295,6 +298,98 @@ fn render_help(frame: &mut Frame<'_>) {
                 .borders(Borders::ALL)
                 .title("lazyjj Help")
                 .border_style(Style::default().fg(Color::Magenta)),
+        )
+        .wrap(Wrap { trim: false });
+    frame.render_widget(paragraph, area);
+}
+
+fn render_hook_overlay(frame: &mut Frame<'_>, phase: &HookPhase) {
+    let area = centered_rect(50, 25, frame.area());
+    frame.render_widget(Clear, area);
+
+    let (title, border_color, lines) = match phase {
+        HookPhase::Running {
+            current_hook,
+            index,
+            total,
+            spinner_tick,
+        } => {
+            let spinner = hooks::spinner_char(*spinner_tick);
+            (
+                "Hooks",
+                Color::Yellow,
+                vec![
+                    Line::raw(""),
+                    Line::from(Span::styled(
+                        format!(
+                            "  {spinner} Running '{current_hook}' ({}/{total})...",
+                            index + 1
+                        ),
+                        Style::default().fg(Color::Yellow),
+                    )),
+                    Line::raw(""),
+                    Line::from(Span::styled(
+                        "  Esc cancel",
+                        Style::default().fg(Color::Gray),
+                    )),
+                ],
+            )
+        }
+        HookPhase::Passed { count, .. } => {
+            let s = if *count == 1 { "" } else { "s" };
+            (
+                "Hooks",
+                Color::Green,
+                vec![
+                    Line::raw(""),
+                    Line::from(Span::styled(
+                        format!("  ✓ All {count} hook{s} passed"),
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
+                    )),
+                    Line::raw(""),
+                ],
+            )
+        }
+        HookPhase::Failed { message, output } => {
+            let mut lines = vec![
+                Line::raw(""),
+                Line::from(Span::styled(
+                    format!("  ✗ {message}"),
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                )),
+            ];
+            if !output.is_empty() {
+                lines.push(Line::raw(""));
+                for line in output.lines().take(6) {
+                    lines.push(Line::from(Span::styled(
+                        format!("  {line}"),
+                        Style::default().fg(Color::Gray),
+                    )));
+                }
+                if output.lines().count() > 6 {
+                    lines.push(Line::from(Span::styled(
+                        "  ... see Command Log for full output",
+                        Style::default().fg(Color::DarkGray),
+                    )));
+                }
+            }
+            lines.push(Line::raw(""));
+            lines.push(Line::from(Span::styled(
+                "  Esc dismiss",
+                Style::default().fg(Color::Gray),
+            )));
+            ("Hook Failed", Color::Red, lines)
+        }
+    };
+
+    let paragraph = Paragraph::new(Text::from(lines))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(title.to_owned())
+                .border_style(Style::default().fg(border_color)),
         )
         .wrap(Wrap { trim: false });
     frame.render_widget(paragraph, area);

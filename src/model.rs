@@ -133,6 +133,24 @@ pub struct PromptState {
 }
 
 #[derive(Debug, Clone)]
+pub enum HookPhase {
+    Running {
+        current_hook: String,
+        index: usize,
+        total: usize,
+        spinner_tick: usize,
+    },
+    Passed {
+        count: usize,
+        ticks_remaining: usize,
+    },
+    Failed {
+        message: String,
+        output: String,
+    },
+}
+
+#[derive(Debug, Clone)]
 pub struct RepoSnapshot {
     pub root: String,
     pub status_summary: Vec<String>,

@@ -1,5 +1,6 @@
 use std::io::{self, Stdout};
 use std::panic;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -13,14 +14,16 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::text::{Line, Span};
 
 use crate::config::Config;
+use crate::hooks::{HookProgress, HookRunner};
 use crate::jj::JjClient;
-use crate::model::{Action, DiffKind, DiffLine, Focus, PromptKind, PromptState, RepoSnapshot};
+use crate::model::{
+    Action, DiffKind, DiffLine, Focus, HookPhase, PromptKind, PromptState, RepoSnapshot,
+};
 use crate::ui;
 
 pub struct App {
     pub repo_root: String,
     client: JjClient,
-    #[allow(dead_code)]
     pub config: Config,
     pub status_summary: Vec<String>,
     pub files: Vec<crate::model::FileEntry>,
@@ -41,6 +44,8 @@ pub struct App {
     pub operation_index: usize,
     pub show_help: bool,
     pub prompt: Option<PromptState>,
+    hook_runner: Option<HookRunner>,
+    pub hook_phase: Option<HookPhase>,
 }
 
 impl App {
@@ -68,6 +73,8 @@ impl App {
             operation_index: 0,
             show_help: false,
             prompt: None,
+            hook_runner: None,
+            hook_phase: None,
         };
         app.recount_diff();
         app
@@ -392,6 +399,25 @@ impl App {
     }
 
     fn push(&mut self) {
+        if self.hook_phase.is_some() {
+            return;
+        }
+        let hooks = &self.config.hooks.pre_push;
+        if hooks.is_empty() {
+            self.execute_push();
+        } else {
+            let runner = HookRunner::start(hooks.clone(), PathBuf::from(&self.repo_root));
+            self.hook_runner = Some(runner);
+            self.hook_phase = Some(HookPhase::Running {
+                current_hook: String::new(),
+                index: 0,
+                total: hooks.len(),
+                spinner_tick: 0,
+            });
+        }
+    }
+
+    fn execute_push(&mut self) {
         let bookmark = self.selected_bookmark().map(|b| b.name.clone());
         let result = match &bookmark {
             Some(name) => self.client.git_push(Some(name)),
@@ -416,13 +442,107 @@ impl App {
                 if !output.stderr.trim().is_empty() {
                     self.push_output(output.stderr.trim().to_owned());
                 }
-                self.status_message = Some(format!("Executed {label}"));
+                let prefix = if self.config.hooks.pre_push.is_empty() {
+                    ""
+                } else {
+                    "✓ Hooks passed — "
+                };
+                self.status_message = Some(format!("{prefix}Executed {label}"));
                 self.refresh();
             }
             Err(error) => {
                 self.status_message = Some(error.to_string());
                 self.push_output(format!("push failed: {error}"));
             }
+        }
+    }
+
+    pub fn tick(&mut self) {
+        // Handle Passed toast countdown (runner already dropped)
+        if let Some(HookPhase::Passed {
+            ticks_remaining, ..
+        }) = &mut self.hook_phase
+        {
+            if *ticks_remaining == 0 {
+                self.hook_phase = None;
+                self.execute_push();
+            } else {
+                *ticks_remaining -= 1;
+            }
+            return;
+        }
+
+        let Some(runner) = &self.hook_runner else {
+            return;
+        };
+
+        // Collect messages to avoid borrow conflict
+        let messages: Vec<_> = std::iter::from_fn(|| runner.rx.try_recv().ok()).collect();
+
+        for msg in messages {
+            match msg {
+                HookProgress::Started { name, index, total } => {
+                    self.hook_phase = Some(HookPhase::Running {
+                        current_hook: name,
+                        index,
+                        total,
+                        spinner_tick: 0,
+                    });
+                }
+                HookProgress::Passed { name } => {
+                    self.push_output(format!("✓ Hook '{name}' passed"));
+                }
+                HookProgress::AllPassed => {
+                    let total = match &self.hook_phase {
+                        Some(HookPhase::Running { total, .. }) => *total,
+                        _ => 0,
+                    };
+                    self.hook_runner = None;
+                    self.hook_phase = Some(HookPhase::Passed {
+                        count: total,
+                        ticks_remaining: 12, // ~1.5s at 120ms/tick
+                    });
+                    return;
+                }
+                HookProgress::Failed { name, output } => {
+                    self.push_output(format!("✗ Hook '{name}' failed"));
+                    if !output.is_empty() {
+                        for line in output.lines() {
+                            self.push_output(format!("  {line}"));
+                        }
+                    }
+                    self.hook_runner = None;
+                    self.hook_phase = Some(HookPhase::Failed {
+                        message: format!("Hook '{name}' failed"),
+                        output,
+                    });
+                    return;
+                }
+                HookProgress::TimedOut { name, timeout_secs } => {
+                    let msg = format!("Hook '{name}' timed out after {timeout_secs}s");
+                    self.push_output(format!("✗ {msg}"));
+                    self.hook_runner = None;
+                    self.hook_phase = Some(HookPhase::Failed {
+                        message: msg,
+                        output: String::new(),
+                    });
+                    return;
+                }
+                HookProgress::NotFound { name, install_hint } => {
+                    self.push_output(format!("✗ Hook '{name}': {install_hint}"));
+                    self.hook_runner = None;
+                    self.hook_phase = Some(HookPhase::Failed {
+                        message: format!("Hook '{name}': {install_hint}"),
+                        output: String::new(),
+                    });
+                    return;
+                }
+            }
+        }
+
+        // Advance spinner
+        if let Some(HookPhase::Running { spinner_tick, .. }) = &mut self.hook_phase {
+            *spinner_tick = spinner_tick.wrapping_add(1);
         }
     }
 
@@ -497,6 +617,34 @@ impl App {
     }
 
     fn on_key(&mut self, key: KeyEvent) -> bool {
+        // Handle hook overlay states first
+        if let Some(phase) = &self.hook_phase {
+            match phase {
+                HookPhase::Running { .. } => match key.code {
+                    KeyCode::Char('q') => return true,
+                    KeyCode::Esc => {
+                        self.hook_runner = None;
+                        self.hook_phase = None;
+                        self.status_message = Some("Push cancelled".to_owned());
+                    }
+                    _ => {}
+                },
+                HookPhase::Passed { .. } => {
+                    // Any key skips the toast and pushes immediately
+                    self.hook_phase = None;
+                    self.execute_push();
+                }
+                HookPhase::Failed { .. } => match key.code {
+                    KeyCode::Char('q') => return true,
+                    KeyCode::Esc | KeyCode::Enter => {
+                        self.hook_phase = None;
+                    }
+                    _ => {}
+                },
+            }
+            return false;
+        }
+
         if let Some(prompt) = &mut self.prompt {
             match key.code {
                 KeyCode::Esc => self.prompt = None,
@@ -713,6 +861,7 @@ pub fn run() -> Result<()> {
 
 fn run_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, mut app: App) -> Result<()> {
     loop {
+        app.tick();
         terminal.draw(|frame| ui::render(frame, &app))?;
         if event::poll(Duration::from_millis(120))?
             && let Event::Key(key) = event::read()?
