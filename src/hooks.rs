@@ -74,7 +74,8 @@ pub struct ToolDef {
 }
 
 pub static TOOL_CATALOG: &[ToolDef] = &[
-    // --- Formatters ---
+    // ===================== Formatters =====================
+    // Rust
     ToolDef {
         name: "rustfmt",
         language: "Rust",
@@ -85,10 +86,11 @@ pub static TOOL_CATALOG: &[ToolDef] = &[
         treefmt_entry: Some(TreefmtEntry {
             name: "rustfmt",
             command: "rustfmt",
-            options: &[], // --edition is added dynamically from Cargo.toml
+            options: &[], // --edition injected dynamically from Cargo.toml
             includes: &["*.rs"],
         }),
     },
+    // JS/TS
     ToolDef {
         name: "prettier",
         language: "JS/TS",
@@ -117,6 +119,7 @@ pub static TOOL_CATALOG: &[ToolDef] = &[
             includes: &["*.js", "*.ts", "*.jsx", "*.tsx", "*.json"],
         }),
     },
+    // Python
     ToolDef {
         name: "ruff format",
         language: "Python",
@@ -146,6 +149,21 @@ pub static TOOL_CATALOG: &[ToolDef] = &[
         }),
     },
     ToolDef {
+        name: "isort",
+        language: "Python",
+        hook_command: "",
+        install_cmd: "pip install isort",
+        check_binary: "isort",
+        category: ToolCategory::Formatter,
+        treefmt_entry: Some(TreefmtEntry {
+            name: "isort",
+            command: "isort",
+            options: &[],
+            includes: &["*.py"],
+        }),
+    },
+    // Go
+    ToolDef {
         name: "gofmt",
         language: "Go",
         hook_command: "",
@@ -159,7 +177,202 @@ pub static TOOL_CATALOG: &[ToolDef] = &[
             includes: &["*.go"],
         }),
     },
-    // --- Linters ---
+    ToolDef {
+        name: "gofumpt",
+        language: "Go",
+        hook_command: "",
+        install_cmd: "go install mvdan.cc/gofumpt@latest",
+        check_binary: "gofumpt",
+        category: ToolCategory::Formatter,
+        treefmt_entry: Some(TreefmtEntry {
+            name: "gofumpt",
+            command: "gofumpt",
+            options: &["-w"],
+            includes: &["*.go"],
+        }),
+    },
+    ToolDef {
+        name: "goimports",
+        language: "Go",
+        hook_command: "",
+        install_cmd: "go install golang.org/x/tools/cmd/goimports@latest",
+        check_binary: "goimports",
+        category: ToolCategory::Formatter,
+        treefmt_entry: Some(TreefmtEntry {
+            name: "goimports",
+            command: "goimports",
+            options: &["-w"],
+            includes: &["*.go"],
+        }),
+    },
+    // C/C++
+    ToolDef {
+        name: "clang-format",
+        language: "C/C++",
+        hook_command: "",
+        install_cmd: "brew install clang-format",
+        check_binary: "clang-format",
+        category: ToolCategory::Formatter,
+        treefmt_entry: Some(TreefmtEntry {
+            name: "clang-format",
+            command: "clang-format",
+            options: &["-i"],
+            includes: &["*.c", "*.h", "*.cpp", "*.hpp", "*.cc", "*.cxx"],
+        }),
+    },
+    // Java
+    ToolDef {
+        name: "google-java-format",
+        language: "Java",
+        hook_command: "",
+        install_cmd: "brew install google-java-format",
+        check_binary: "google-java-format",
+        category: ToolCategory::Formatter,
+        treefmt_entry: Some(TreefmtEntry {
+            name: "google-java-format",
+            command: "google-java-format",
+            options: &["-i"],
+            includes: &["*.java"],
+        }),
+    },
+    // Kotlin
+    ToolDef {
+        name: "ktlint",
+        language: "Kotlin",
+        hook_command: "",
+        install_cmd: "brew install ktlint",
+        check_binary: "ktlint",
+        category: ToolCategory::Formatter,
+        treefmt_entry: Some(TreefmtEntry {
+            name: "ktlint",
+            command: "ktlint",
+            options: &["--format"],
+            includes: &["*.kt", "*.kts"],
+        }),
+    },
+    // Swift
+    ToolDef {
+        name: "swiftformat",
+        language: "Swift",
+        hook_command: "",
+        install_cmd: "brew install swiftformat",
+        check_binary: "swiftformat",
+        category: ToolCategory::Formatter,
+        treefmt_entry: Some(TreefmtEntry {
+            name: "swiftformat",
+            command: "swiftformat",
+            options: &[],
+            includes: &["*.swift"],
+        }),
+    },
+    // Ruby
+    ToolDef {
+        name: "rubocop",
+        language: "Ruby",
+        hook_command: "",
+        install_cmd: "gem install rubocop",
+        check_binary: "rubocop",
+        category: ToolCategory::Formatter,
+        treefmt_entry: Some(TreefmtEntry {
+            name: "rubocop",
+            command: "rubocop",
+            options: &["--autocorrect"],
+            includes: &["*.rb"],
+        }),
+    },
+    // PHP
+    ToolDef {
+        name: "php-cs-fixer",
+        language: "PHP",
+        hook_command: "",
+        install_cmd: "composer global require friendsofphp/php-cs-fixer",
+        check_binary: "php-cs-fixer",
+        category: ToolCategory::Formatter,
+        treefmt_entry: Some(TreefmtEntry {
+            name: "php-cs-fixer",
+            command: "php-cs-fixer",
+            options: &["fix"],
+            includes: &["*.php"],
+        }),
+    },
+    // Shell
+    ToolDef {
+        name: "shfmt",
+        language: "Shell",
+        hook_command: "",
+        install_cmd: "brew install shfmt",
+        check_binary: "shfmt",
+        category: ToolCategory::Formatter,
+        treefmt_entry: Some(TreefmtEntry {
+            name: "shfmt",
+            command: "shfmt",
+            options: &["-w"],
+            includes: &["*.sh", "*.bash"],
+        }),
+    },
+    // Lua
+    ToolDef {
+        name: "stylua",
+        language: "Lua",
+        hook_command: "",
+        install_cmd: "cargo install stylua",
+        check_binary: "stylua",
+        category: ToolCategory::Formatter,
+        treefmt_entry: Some(TreefmtEntry {
+            name: "stylua",
+            command: "stylua",
+            options: &[],
+            includes: &["*.lua"],
+        }),
+    },
+    // Zig
+    ToolDef {
+        name: "zig fmt",
+        language: "Zig",
+        hook_command: "",
+        install_cmd: "",
+        check_binary: "zig",
+        category: ToolCategory::Formatter,
+        treefmt_entry: Some(TreefmtEntry {
+            name: "zig-fmt",
+            command: "zig",
+            options: &["fmt"],
+            includes: &["*.zig"],
+        }),
+    },
+    // Terraform
+    ToolDef {
+        name: "terraform fmt",
+        language: "Terraform",
+        hook_command: "",
+        install_cmd: "brew install terraform",
+        check_binary: "terraform",
+        category: ToolCategory::Formatter,
+        treefmt_entry: Some(TreefmtEntry {
+            name: "terraform-fmt",
+            command: "terraform",
+            options: &["fmt"],
+            includes: &["*.tf", "*.tfvars"],
+        }),
+    },
+    // SQL
+    ToolDef {
+        name: "sqlfluff fix",
+        language: "SQL",
+        hook_command: "",
+        install_cmd: "pip install sqlfluff",
+        check_binary: "sqlfluff",
+        category: ToolCategory::Formatter,
+        treefmt_entry: Some(TreefmtEntry {
+            name: "sqlfluff-fix",
+            command: "sqlfluff",
+            options: &["fix", "--force"],
+            includes: &["*.sql"],
+        }),
+    },
+    // YAML (prettier already covers .yaml via includes)
+    // ===================== Linters =====================
+    // Rust
     ToolDef {
         name: "clippy",
         language: "Rust",
@@ -169,6 +382,7 @@ pub static TOOL_CATALOG: &[ToolDef] = &[
         category: ToolCategory::Linter,
         treefmt_entry: None,
     },
+    // JS/TS
     ToolDef {
         name: "eslint",
         language: "JS/TS",
@@ -187,6 +401,7 @@ pub static TOOL_CATALOG: &[ToolDef] = &[
         category: ToolCategory::Linter,
         treefmt_entry: None,
     },
+    // Python
     ToolDef {
         name: "ruff check",
         language: "Python",
@@ -197,11 +412,139 @@ pub static TOOL_CATALOG: &[ToolDef] = &[
         treefmt_entry: None,
     },
     ToolDef {
+        name: "mypy",
+        language: "Python",
+        hook_command: "mypy .",
+        install_cmd: "pip install mypy",
+        check_binary: "mypy",
+        category: ToolCategory::Linter,
+        treefmt_entry: None,
+    },
+    ToolDef {
+        name: "pylint",
+        language: "Python",
+        hook_command: "pylint **/*.py",
+        install_cmd: "pip install pylint",
+        check_binary: "pylint",
+        category: ToolCategory::Linter,
+        treefmt_entry: None,
+    },
+    // Go
+    ToolDef {
         name: "go vet",
         language: "Go",
         hook_command: "go vet ./...",
         install_cmd: "",
         check_binary: "go",
+        category: ToolCategory::Linter,
+        treefmt_entry: None,
+    },
+    ToolDef {
+        name: "golangci-lint",
+        language: "Go",
+        hook_command: "golangci-lint run",
+        install_cmd: "brew install golangci-lint",
+        check_binary: "golangci-lint",
+        category: ToolCategory::Linter,
+        treefmt_entry: None,
+    },
+    // C/C++
+    ToolDef {
+        name: "cppcheck",
+        language: "C/C++",
+        hook_command: "cppcheck --error-exitcode=1 .",
+        install_cmd: "brew install cppcheck",
+        check_binary: "cppcheck",
+        category: ToolCategory::Linter,
+        treefmt_entry: None,
+    },
+    // Java
+    ToolDef {
+        name: "checkstyle",
+        language: "Java",
+        hook_command: "checkstyle -c /google_checks.xml src/",
+        install_cmd: "brew install checkstyle",
+        check_binary: "checkstyle",
+        category: ToolCategory::Linter,
+        treefmt_entry: None,
+    },
+    // Kotlin
+    ToolDef {
+        name: "detekt",
+        language: "Kotlin",
+        hook_command: "detekt --build-upon-default-config",
+        install_cmd: "brew install detekt",
+        check_binary: "detekt",
+        category: ToolCategory::Linter,
+        treefmt_entry: None,
+    },
+    // Swift
+    ToolDef {
+        name: "swiftlint",
+        language: "Swift",
+        hook_command: "swiftlint lint --strict",
+        install_cmd: "brew install swiftlint",
+        check_binary: "swiftlint",
+        category: ToolCategory::Linter,
+        treefmt_entry: None,
+    },
+    // Shell
+    ToolDef {
+        name: "shellcheck",
+        language: "Shell",
+        hook_command: "shellcheck **/*.sh",
+        install_cmd: "brew install shellcheck",
+        check_binary: "shellcheck",
+        category: ToolCategory::Linter,
+        treefmt_entry: None,
+    },
+    // Lua
+    ToolDef {
+        name: "luacheck",
+        language: "Lua",
+        hook_command: "luacheck .",
+        install_cmd: "brew install luacheck",
+        check_binary: "luacheck",
+        category: ToolCategory::Linter,
+        treefmt_entry: None,
+    },
+    // PHP
+    ToolDef {
+        name: "phpstan",
+        language: "PHP",
+        hook_command: "phpstan analyse",
+        install_cmd: "composer global require phpstan/phpstan",
+        check_binary: "phpstan",
+        category: ToolCategory::Linter,
+        treefmt_entry: None,
+    },
+    // SQL
+    ToolDef {
+        name: "sqlfluff lint",
+        language: "SQL",
+        hook_command: "sqlfluff lint .",
+        install_cmd: "pip install sqlfluff",
+        check_binary: "sqlfluff",
+        category: ToolCategory::Linter,
+        treefmt_entry: None,
+    },
+    // Terraform
+    ToolDef {
+        name: "tflint",
+        language: "Terraform",
+        hook_command: "tflint",
+        install_cmd: "brew install tflint",
+        check_binary: "tflint",
+        category: ToolCategory::Linter,
+        treefmt_entry: None,
+    },
+    // YAML
+    ToolDef {
+        name: "yamllint",
+        language: "YAML",
+        hook_command: "yamllint .",
+        install_cmd: "pip install yamllint",
+        check_binary: "yamllint",
         category: ToolCategory::Linter,
         treefmt_entry: None,
     },
@@ -604,35 +947,41 @@ mod tests {
     #[test]
     fn tool_catalog_has_expected_entries() {
         let names: Vec<&str> = TOOL_CATALOG.iter().map(|t| t.name).collect();
-        // Formatters (new treefmt-based entries)
-        assert!(
-            names.contains(&"biome format"),
-            "expected 'biome format' in catalog"
-        );
-        assert!(names.contains(&"gofmt"), "expected 'gofmt' in catalog");
-        // Linters
-        assert!(
-            names.contains(&"biome lint"),
-            "expected 'biome lint' in catalog"
-        );
-        assert!(names.contains(&"clippy"), "expected 'clippy' in catalog");
-        // The old single "biome" entry should no longer exist
-        assert!(
-            !names.contains(&"biome"),
-            "old 'biome' entry should be replaced by 'biome format' and 'biome lint'"
-        );
+        // Formatters — spot check across languages
+        assert!(names.contains(&"rustfmt"));
+        assert!(names.contains(&"prettier"));
+        assert!(names.contains(&"biome format"));
+        assert!(names.contains(&"black"));
+        assert!(names.contains(&"gofmt"));
+        assert!(names.contains(&"gofumpt"));
+        assert!(names.contains(&"clang-format"));
+        assert!(names.contains(&"shfmt"));
+        assert!(names.contains(&"stylua"));
+        assert!(names.contains(&"swiftformat"));
+        assert!(names.contains(&"terraform fmt"));
+        // Linters — spot check across languages
+        assert!(names.contains(&"clippy"));
+        assert!(names.contains(&"eslint"));
+        assert!(names.contains(&"biome lint"));
+        assert!(names.contains(&"golangci-lint"));
+        assert!(names.contains(&"mypy"));
+        assert!(names.contains(&"shellcheck"));
+        assert!(names.contains(&"swiftlint"));
+        assert!(names.contains(&"tflint"));
+        // Old single "biome" should not exist
+        assert!(!names.contains(&"biome"));
     }
 
     #[test]
     fn tool_catalog_formatter_count() {
         let count = catalog_formatters().count();
-        assert_eq!(count, 6, "expected exactly 6 formatters in TOOL_CATALOG");
+        assert_eq!(count, 20, "expected 20 formatters in TOOL_CATALOG");
     }
 
     #[test]
     fn tool_catalog_linter_count() {
         let count = catalog_linters().count();
-        assert_eq!(count, 5, "expected exactly 5 linters in TOOL_CATALOG");
+        assert_eq!(count, 18, "expected 18 linters in TOOL_CATALOG");
     }
 
     #[test]

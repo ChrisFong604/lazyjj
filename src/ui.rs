@@ -481,9 +481,11 @@ fn render_tool_picker(frame: &mut Frame<'_>, picker: &ToolPickerState) {
     lines.push(Line::raw(""));
     lines.push(Line::from(vec![
         Span::styled("  Space", Style::default().fg(Color::Yellow)),
-        Span::styled(" toggle  ", Style::default().fg(Color::Gray)),
+        Span::styled(" toggle", Style::default().fg(Color::Gray)),
+        Span::styled(" | ", Style::default().fg(Color::DarkGray)),
         Span::styled("Enter", Style::default().fg(Color::Yellow)),
-        Span::styled(" confirm  ", Style::default().fg(Color::Gray)),
+        Span::styled(" confirm", Style::default().fg(Color::Gray)),
+        Span::styled(" | ", Style::default().fg(Color::DarkGray)),
         Span::styled("Esc", Style::default().fg(Color::Yellow)),
         Span::styled(" skip", Style::default().fg(Color::Gray)),
     ]));
@@ -537,7 +539,8 @@ fn render_treefmt_install_picker(frame: &mut Frame<'_>, state: &TreefmtInstallSt
     lines.push(Line::raw(""));
     lines.push(Line::from(vec![
         Span::styled("  Enter", Style::default().fg(Color::Yellow)),
-        Span::styled(" install  ", Style::default().fg(Color::Gray)),
+        Span::styled(" install", Style::default().fg(Color::Gray)),
+        Span::styled(" | ", Style::default().fg(Color::DarkGray)),
         Span::styled("Esc", Style::default().fg(Color::Yellow)),
         Span::styled(" back", Style::default().fg(Color::Gray)),
     ]));
