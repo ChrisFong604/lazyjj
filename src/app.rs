@@ -203,6 +203,7 @@ impl App {
                 self.ensure_indices();
                 if self.diff_title == "working copy" || self.diff_lines.is_empty() {
                     self.diff_lines = snapshot.initial_diff;
+                    self.diff_scroll = 0;
                     self.recount_diff();
                 }
                 self.push_output("refresh complete".to_owned());
@@ -244,7 +245,36 @@ impl App {
         }
     }
 
+    /// Full inspect: loads diff AND updates the Files panel for the selected item.
+    /// Called on Enter.
     fn inspect_current(&mut self) {
+        // Update files for revision/bookmark context (costs 1 jj command)
+        match self.focus {
+            Focus::Revisions => {
+                if let Some(rev) = self.selected_revision().cloned() {
+                    self.update_files_for_revision(
+                        format!("revision {}", rev.commit_id),
+                        rev.commit_id.clone(),
+                    );
+                }
+            }
+            Focus::Bookmarks => {
+                if let Some(bookmark) = self.selected_bookmark().cloned() {
+                    self.update_files_for_revision(
+                        format!("bookmark {}", bookmark.name),
+                        bookmark.name.clone(),
+                    );
+                }
+            }
+            _ => {}
+        }
+        // Then load the diff (shared with preview)
+        self.preview_current();
+    }
+
+    /// Lightweight preview: loads only the diff for the selected item (1 jj command).
+    /// Called on j/k navigation for responsive auto-preview.
+    fn preview_current(&mut self) {
         let result = match self.focus {
             Focus::Files => {
                 if let Some(file) = self.selected_file().cloned() {
@@ -267,18 +297,20 @@ impl App {
             }
             Focus::Revisions => {
                 if let Some(rev) = self.selected_revision().cloned() {
-                    let label = format!("revision {}", rev.commit_id);
-                    self.update_files_for_revision(label.clone(), rev.commit_id.clone());
-                    self.load_diff(label, self.client.diff_for_revision(&rev.commit_id))
+                    self.load_diff(
+                        format!("revision {}", rev.commit_id),
+                        self.client.diff_for_revision(&rev.commit_id),
+                    )
                 } else {
                     Ok(())
                 }
             }
             Focus::Bookmarks => {
                 if let Some(bookmark) = self.selected_bookmark().cloned() {
-                    let label = format!("bookmark {}", bookmark.name);
-                    self.update_files_for_revision(label.clone(), bookmark.name.clone());
-                    self.load_diff(label, self.client.diff_for_revision(&bookmark.name))
+                    self.load_diff(
+                        format!("bookmark {}", bookmark.name),
+                        self.client.diff_for_revision(&bookmark.name),
+                    )
                 } else {
                     Ok(())
                 }
@@ -1116,7 +1148,7 @@ impl App {
                 let prev = self.file_index;
                 adjust_index(&mut self.file_index, self.files.len(), delta);
                 if self.file_index != prev {
-                    self.inspect_current();
+                    self.preview_current();
                 }
             }
             Focus::Revisions => {
@@ -1137,7 +1169,7 @@ impl App {
                 let prev = self.operation_index;
                 adjust_index(&mut self.operation_index, self.operations.len(), delta);
                 if self.operation_index != prev {
-                    self.inspect_current();
+                    self.preview_current();
                 }
             }
             Focus::Diff => self.scroll_diff(delta),

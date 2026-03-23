@@ -219,7 +219,7 @@ fn render_footer(frame: &mut Frame<'_>, app: &App, area: Rect) {
         .as_ref()
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| {
-            "Tab focus  j/k move  Enter inspect  r refresh  P push  F fetch  H run hooks  p command  d describe  n new  b bookmark  m move bookmark  s squash  a abandon  u undo  ? help  q quit".to_owned()
+            "Tab focus | j/k move | Enter inspect | r refresh | P push | F fetch | H hooks | p command | d describe | n new | b bookmark | m move | s squash | a abandon | u undo | ? help | q quit".to_owned()
         });
     let paragraph = Paragraph::new(message)
         .alignment(Alignment::Left)
