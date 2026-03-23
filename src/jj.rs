@@ -72,6 +72,16 @@ impl JjClient {
         Ok(parse_diff(&output.stdout))
     }
 
+    pub fn changed_files_for_revision(&self, revset: &str) -> Result<Vec<FileEntry>> {
+        let output = self.run_read(&["diff", "--summary", "-r", revset])?;
+        Ok(parse_file_summary(&output.stdout))
+    }
+
+    pub fn diff_for_revision_path(&self, revset: &str, path: &str) -> Result<Vec<DiffLine>> {
+        let output = self.run_read(&["diff", "--git", "-r", revset, path])?;
+        Ok(parse_diff(&output.stdout))
+    }
+
     pub fn diff_for_revision(&self, revset: &str) -> Result<Vec<DiffLine>> {
         let output = self.run_read(&["show", revset, "--git"])?;
         Ok(parse_diff(&output.stdout))
@@ -101,21 +111,7 @@ impl JjClient {
 
     pub fn changed_files(&self) -> Result<Vec<FileEntry>> {
         let output = self.run_read(&["diff", "--summary"])?;
-        let files = output
-            .stdout
-            .lines()
-            .filter_map(|line| {
-                let trimmed = line.trim();
-                if trimmed.is_empty() {
-                    return None;
-                }
-                let mut parts = trimmed.splitn(2, ' ');
-                let status = parts.next()?.trim().to_owned();
-                let path = parts.next().unwrap_or_default().trim().to_owned();
-                Some(FileEntry { status, path })
-            })
-            .collect();
-        Ok(files)
+        Ok(parse_file_summary(&output.stdout))
     }
 
     pub fn revisions(&self) -> Result<Vec<RevisionEntry>> {
@@ -264,6 +260,21 @@ fn shorten(value: &str, width: usize) -> String {
     value.chars().take(width).collect()
 }
 
+fn parse_file_summary(text: &str) -> Vec<FileEntry> {
+    text.lines()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+            let mut parts = trimmed.splitn(2, ' ');
+            let status = parts.next()?.trim().to_owned();
+            let path = parts.next().unwrap_or_default().trim().to_owned();
+            Some(FileEntry { status, path })
+        })
+        .collect()
+}
+
 fn parse_diff(text: &str) -> Vec<DiffLine> {
     if text.trim().is_empty() {
         return vec![DiffLine {
@@ -304,7 +315,7 @@ fn parse_diff(text: &str) -> Vec<DiffLine> {
 
 #[cfg(test)]
 mod tests {
-    use super::{empty_fallback, parse_diff, split_csv};
+    use super::{JjClient, empty_fallback, parse_diff, split_csv};
     use crate::model::DiffKind;
 
     #[test]
@@ -337,5 +348,27 @@ mod tests {
     fn empty_fallback_uses_fallback_for_blank_values() {
         assert_eq!(empty_fallback("   ", "fallback"), "fallback");
         assert_eq!(empty_fallback("value", "fallback"), "value");
+    }
+
+    // Verify changed_files_for_revision returns Ok for the working copy.
+    #[test]
+    fn changed_files_for_revision_returns_ok() {
+        let client = JjClient::discover(std::path::Path::new(env!("CARGO_MANIFEST_DIR")))
+            .expect("test repo should be discoverable");
+        let result = client.changed_files_for_revision("@");
+        assert!(
+            result.is_ok(),
+            "changed_files_for_revision('@') should succeed; got: {:?}",
+            result.err()
+        );
+        // The result may be empty (no uncommitted changes) or non-empty — both are valid.
+        // The important contract is that the call succeeds and returns a Vec<FileEntry>.
+        let files = result.unwrap();
+        for f in &files {
+            assert!(
+                !f.path.is_empty(),
+                "every FileEntry returned should have a non-empty path"
+            );
+        }
     }
 }

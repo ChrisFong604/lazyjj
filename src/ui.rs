@@ -98,7 +98,7 @@ fn render_body(frame: &mut Frame<'_>, app: &App, area: Rect) {
     render_list(
         frame,
         left[0],
-        Focus::Files.title(),
+        &app.files_title(),
         app.focus == Focus::Files,
         &app.file_rows(),
         app.file_index,

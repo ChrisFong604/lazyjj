@@ -33,6 +33,12 @@ pub struct OperationEntry {
     pub description: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FilesContext {
+    WorkingCopy,
+    Revision { label: String, revset: String },
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiffKind {
     Header,
@@ -311,8 +317,7 @@ mod tests {
     use super::*;
 
     // Helper: construct a ToolPickerEntry using the new `category` field.
-    // This will fail to compile until `ToolPickerEntry` gains a `category` field
-    // and `ToolCategory` is defined.
+    // Helper to construct a ToolPickerEntry for tests.
     fn make_entry(name: &str, category: ToolCategory, selected: bool) -> ToolPickerEntry {
         ToolPickerEntry {
             name: name.to_owned(),
@@ -357,7 +362,6 @@ mod tests {
             make_entry("clippy", ToolCategory::Linter, false),
         ]);
 
-        // `build_rows` does not exist yet — this test will not compile until implemented.
         let rows = picker.build_rows();
 
         // First row must be the Formatters header
@@ -443,7 +447,7 @@ mod tests {
             make_entry("eslint", ToolCategory::Linter, false),
         ]);
 
-        // `selected_formatters` does not exist yet.
+        // Verify selected_formatters only returns formatter entries.
         let formatters = picker.selected_formatters();
         assert_eq!(
             formatters.len(),
@@ -473,7 +477,7 @@ mod tests {
 
     #[test]
     fn treefmt_install_state_new() {
-        // `TreefmtInstallState` does not exist yet.
+        // Verify default cursor position.
         let state = TreefmtInstallState::new();
         assert_eq!(
             state.cursor, 0,

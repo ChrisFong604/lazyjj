@@ -20,8 +20,8 @@ use crate::hooks::{
 };
 use crate::jj::JjClient;
 use crate::model::{
-    Action, DiffKind, DiffLine, Focus, HookPhase, PromptKind, PromptState, RepoSnapshot,
-    ToolPickerEntry, ToolPickerState, TreefmtInstallState,
+    Action, DiffKind, DiffLine, FilesContext, Focus, HookPhase, PromptKind, PromptState,
+    RepoSnapshot, ToolPickerEntry, ToolPickerState, TreefmtInstallState,
 };
 use crate::ui;
 
@@ -46,6 +46,7 @@ pub struct App {
     pub revision_index: usize,
     pub bookmark_index: usize,
     pub operation_index: usize,
+    pub files_context: FilesContext,
     pub show_help: bool,
     pub prompt: Option<PromptState>,
     hook_runner: Option<HookRunner>,
@@ -76,6 +77,7 @@ impl App {
             diff_removals: 0,
             output_log: vec!["lazyjj initialized".to_owned()],
             status_message: None,
+            files_context: FilesContext::WorkingCopy,
             focus: Focus::Files,
             file_index: 0,
             revision_index: 0,
@@ -194,6 +196,7 @@ impl App {
                 self.repo_root = snapshot.root;
                 self.status_summary = snapshot.status_summary;
                 self.files = snapshot.files;
+                self.files_context = FilesContext::WorkingCopy;
                 self.revisions = snapshot.revisions;
                 self.bookmarks = snapshot.bookmarks;
                 self.operations = snapshot.operations;
@@ -219,34 +222,63 @@ impl App {
         self.operation_index = clamp_index(self.operation_index, self.operations.len());
     }
 
+    fn update_files_for_revision(&mut self, label: String, revset: String) {
+        match self.client.changed_files_for_revision(&revset) {
+            Ok(files) => {
+                self.files = files;
+                self.files_context = FilesContext::Revision { label, revset };
+                self.file_index = 0;
+            }
+            Err(error) => {
+                self.push_output(format!("failed to load files: {error}"));
+            }
+        }
+    }
+
+    pub fn files_title(&self) -> String {
+        match &self.files_context {
+            FilesContext::WorkingCopy => Focus::Files.title().to_owned(),
+            FilesContext::Revision { label, .. } => {
+                format!("{} ({})", Focus::Files.title(), label)
+            }
+        }
+    }
+
     fn inspect_current(&mut self) {
         let result = match self.focus {
             Focus::Files => {
                 if let Some(file) = self.selected_file().cloned() {
-                    self.load_diff(
-                        format!("file {}", file.path),
-                        self.client.diff_for_path(&file.path),
-                    )
+                    match &self.files_context {
+                        FilesContext::WorkingCopy => self.load_diff(
+                            format!("file {}", file.path),
+                            self.client.diff_for_path(&file.path),
+                        ),
+                        FilesContext::Revision { revset, .. } => {
+                            let revset = revset.clone();
+                            self.load_diff(
+                                format!("file {}", file.path),
+                                self.client.diff_for_revision_path(&revset, &file.path),
+                            )
+                        }
+                    }
                 } else {
                     Ok(())
                 }
             }
             Focus::Revisions => {
                 if let Some(rev) = self.selected_revision().cloned() {
-                    self.load_diff(
-                        format!("revision {}", rev.commit_id),
-                        self.client.diff_for_revision(&rev.commit_id),
-                    )
+                    let label = format!("revision {}", rev.commit_id);
+                    self.update_files_for_revision(label.clone(), rev.commit_id.clone());
+                    self.load_diff(label, self.client.diff_for_revision(&rev.commit_id))
                 } else {
                     Ok(())
                 }
             }
             Focus::Bookmarks => {
                 if let Some(bookmark) = self.selected_bookmark().cloned() {
-                    self.load_diff(
-                        format!("bookmark {}", bookmark.name),
-                        self.client.diff_for_revision(&bookmark.name),
-                    )
+                    let label = format!("bookmark {}", bookmark.name);
+                    self.update_files_for_revision(label.clone(), bookmark.name.clone());
+                    self.load_diff(label, self.client.diff_for_revision(&bookmark.name))
                 } else {
                     Ok(())
                 }
@@ -1087,10 +1119,26 @@ impl App {
                     self.inspect_current();
                 }
             }
-            Focus::Revisions => adjust_index(&mut self.revision_index, self.revisions.len(), delta),
-            Focus::Bookmarks => adjust_index(&mut self.bookmark_index, self.bookmarks.len(), delta),
+            Focus::Revisions => {
+                let prev = self.revision_index;
+                adjust_index(&mut self.revision_index, self.revisions.len(), delta);
+                if self.revision_index != prev {
+                    self.inspect_current();
+                }
+            }
+            Focus::Bookmarks => {
+                let prev = self.bookmark_index;
+                adjust_index(&mut self.bookmark_index, self.bookmarks.len(), delta);
+                if self.bookmark_index != prev {
+                    self.inspect_current();
+                }
+            }
             Focus::Operations => {
-                adjust_index(&mut self.operation_index, self.operations.len(), delta)
+                let prev = self.operation_index;
+                adjust_index(&mut self.operation_index, self.operations.len(), delta);
+                if self.operation_index != prev {
+                    self.inspect_current();
+                }
             }
             Focus::Diff => self.scroll_diff(delta),
             Focus::Output => {}
@@ -1276,7 +1324,7 @@ mod tests {
     use super::{App, adjust_index, clamp_index};
     use crate::config::Config;
     use crate::jj::JjClient;
-    use crate::model::{Action, DiffKind, DiffLine, Focus, PromptKind, RepoSnapshot};
+    use crate::model::{Action, DiffKind, DiffLine, FilesContext, Focus, PromptKind, RepoSnapshot};
 
     fn test_app() -> App {
         let client = JjClient::discover(std::path::Path::new(env!("CARGO_MANIFEST_DIR")))
@@ -1445,5 +1493,52 @@ mod tests {
             assert_eq!(entry.language, def.language);
             assert_eq!(entry.hook_command, def.hook_command);
         }
+    }
+
+    // Files context and title tests.
+
+    #[test]
+    fn files_title_default_is_working_copy() {
+        let app = test_app();
+        // When no revision context is set, the Files panel title must equal the
+        // static label defined on `Focus::Files`.
+        assert_eq!(
+            app.files_title(),
+            Focus::Files.title(),
+            "default files_title() should return the static Focus::Files label"
+        );
+    }
+
+    #[test]
+    fn files_title_includes_revision_label() {
+        let mut app = test_app();
+        // Switch the Files panel to show a named revision's changed files.
+        app.files_context = FilesContext::Revision {
+            label: "revision abc".to_owned(),
+            revset: "abc".to_owned(),
+        };
+        let title = app.files_title();
+        assert!(
+            title.contains("revision abc"),
+            "files_title() should contain the revision label 'revision abc', got: '{title}'"
+        );
+    }
+
+    #[test]
+    fn refresh_resets_files_context_to_working_copy() {
+        let mut app = test_app();
+        // Put the panel in a non-default state first.
+        app.files_context = FilesContext::Revision {
+            label: "revision abc".to_owned(),
+            revset: "abc".to_owned(),
+        };
+        // A full refresh must bring the Files panel back to showing the working
+        // copy, so that the user sees the current state after any jj operation.
+        app.refresh();
+        assert_eq!(
+            app.files_context,
+            FilesContext::WorkingCopy,
+            "refresh() must reset files_context to FilesContext::WorkingCopy"
+        );
     }
 }
